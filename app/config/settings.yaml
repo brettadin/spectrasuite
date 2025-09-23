@@ -1,0 +1,17 @@
+ui:
+  default_display_mode: flux_density
+  default_wavelength_unit: nm
+  duplicate_scope: session
+  max_visible_traces: 12
+  allow_line_overlays: true
+limits:
+  max_upload_mb: 10
+  max_points: 500000
+  network_timeout_s: 15
+line_overlays:
+  default_species: Fe I
+  default_scaling: relative
+  default_gamma: 0.85
+export:
+  manifest_schema_version: 2
+  include_png: true
