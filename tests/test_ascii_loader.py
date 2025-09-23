@@ -17,6 +17,35 @@ def test_ascii_loader_parses_units(tmp_path: Path) -> None:
     assert canonical.metadata.flux_units == "arb"
 
 
+def test_ascii_loader_handles_bom_headers() -> None:
+    content = "\ufeffWavelength (nm),Flux (arb),Target\n510.0,1.2,Example Object\n".encode()
+    result = load_ascii_spectrum(content, "bom.csv")
+    assert result.wavelength_unit == "nm"
+    assert result.metadata.target == "Example Object"
+    canonical = canonicalize_ascii(result)
+    assert canonical.metadata.target == "Example Object"
+
+
+def test_ascii_loader_handles_messy_synonyms() -> None:
+    content = b"\n".join(
+        [
+            b"Wave Length [Angstrom],FluxDensity,OBJECT NAME,Instrument Name,Telescope-name,Observer",
+            b"5100,1.23e-16,Messy Target,Messy Instrument,Messy Telescope,Astronomer",
+            b"",
+        ]
+    )
+    result = load_ascii_spectrum(content, "messy.csv")
+    assert result.wavelength_unit == "angstrom"
+    assert result.label == "Messy Target"
+    assert result.metadata.target == "Messy Target"
+    assert result.metadata.instrument == "Messy Instrument"
+    assert result.metadata.telescope == "Messy Telescope"
+    assert result.metadata.extra["observer"] == "Astronomer"
+    canonical = canonicalize_ascii(result)
+    assert canonical.metadata.target == "Messy Target"
+    assert canonical.metadata.instrument == "Messy Instrument"
+
+
 def test_session_deduplication() -> None:
     fixture = Path("data/examples/example_spectrum.csv")
     result = load_ascii_spectrum(fixture.read_bytes(), fixture.name)
