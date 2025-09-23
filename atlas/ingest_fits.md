@@ -5,7 +5,10 @@
   normalises them into a shared ingest result. The loader is resilient to:
   - Tables with `WAVELENGTH`/`FLUX` columns (including `loglam` grids that are exponentiated).
   - Image HDUs with linear WCS dispersion (`CRVAL1`, `CDELT1`, `CRPIX1`, `CTYPE1`, `CUNIT1`).
-  - Companion uncertainty data stored as error columns or dedicated `ERR`-style HDUs.
+  - Multi-extension products where flux and wavelength live in separate HDUs (e.g. SDSS
+    `LOG_LAM` companions) as well as inverse-variance error columns or `ERR`-style HDUs.
+  - Non-linear or tabular wavelength solutions by delegating to `specutils.Spectrum`/`Spectrum1D`
+    loaders when native parsing cannot recover a dispersion axis.
 - Provenance captures the selected HDU, wavelength/flux units, air/vacuum hints, a SHA-256 hash,
   and WCS keywords used to build the grid.
 - Metadata harvested from headers populates `TraceMetadata` (target, instrument, telescope, RA/Dec,
