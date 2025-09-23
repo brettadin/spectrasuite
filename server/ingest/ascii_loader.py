@@ -18,6 +18,8 @@ _WAVE_ALIASES = {
     "wavelength",
     "wavelength_nm",
     "wavelength_air",
+    "wavelengths",
+    "wave_length",
     "lambda",
     "lambda_nm",
     "wl",
@@ -29,6 +31,7 @@ _WAVE_ALIASES = {
 _FLUX_ALIASES = {
     "flux",
     "flux_density",
+    "fluxdensity",
     "intensity",
     "counts",
     "flux_erg",
@@ -36,7 +39,13 @@ _FLUX_ALIASES = {
 }
 
 _UNCERTAINTY_ALIASES = {"uncertainty", "error", "sigma", "err", "flux_error"}
-_METADATA_COLUMNS = {"target", "object", "instrument", "telescope", "observer"}
+_METADATA_ALIAS_MAP: dict[str, tuple[str, ...]] = {
+    "target": ("target", "target_name", "name"),
+    "object": ("object", "object_name", "source", "source_name"),
+    "instrument": ("instrument", "instrument_name", "spectrograph"),
+    "telescope": ("telescope", "telescope_name", "observatory"),
+    "observer": ("observer", "observer_name", "pi", "principal_investigator"),
+}
 _UNIT_PATTERN = re.compile(r"(?P<name>[^()\[]+)(?:\s*[\[(](?P<unit>[^)\]]+)[)\]])?", re.IGNORECASE)
 _STANDARD_PATTERN = re.compile(r"(vacuum|air)", re.IGNORECASE)
 
@@ -62,7 +71,11 @@ class ASCIIIngestError(RuntimeError):
 def _clean_header(column: str) -> str:
     """Trim whitespace and strip invisible formatting characters."""
 
+
+    stripped = unicodedata.normalize("NFKC", column).strip()
+
     stripped = column.strip()
+
     if not stripped:
         return stripped
     # Remove zero-width and BOM characters that frequently appear in UTF-8 exports
@@ -70,15 +83,35 @@ def _clean_header(column: str) -> str:
     return cleaned
 
 
+
+def _canonicalise_name(name: str) -> str:
+    """Collapse a header or unit name into a canonical lookup token."""
+
+    if not name:
+        return ""
+    normalized = unicodedata.normalize("NFKC", name)
+    without_marks = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
+    with_separators = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", without_marks)
+    tokens = re.sub(r"[^0-9a-zA-Z]+", "_", with_separators.lower())
+    canonical = re.sub(r"_+", "_", tokens).strip("_")
+    return canonical
+
+
+
 def _normalise_header(column: str) -> tuple[str, str | None]:
     cleaned = _clean_header(column)
     match = _UNIT_PATTERN.match(cleaned)
     if not match:
+
+        return _canonicalise_name(cleaned), None
+    name = match.group("name").strip()
+
         return cleaned.lower(), None
     name = match.group("name").strip().lower()
+
     unit_raw = match.group("unit")
     unit = unit_raw.strip().lower() if unit_raw else None
-    return name, unit
+    return _canonicalise_name(name), unit
 
 
 def _detect_column(columns: Iterable[str], aliases: set[str]) -> str | None:
@@ -105,11 +138,42 @@ def _column_lookup(columns: Iterable[str]) -> dict[str, str]:
 
     lookup: dict[str, str] = {}
     for column in columns:
+
+        key, _ = _normalise_header(column)
+
         key = _clean_header(column).lower()
+
         if key and key not in lookup:
             lookup[key] = column
     return lookup
 
+
+def _extract_first_value(series: pd.Series) -> str | float | int | None:
+    """Return the first non-null, non-empty value from a series."""
+
+    filtered = series.dropna()
+    if filtered.empty:
+        return None
+    value = filtered.iloc[0]
+    if isinstance(value, str):
+        trimmed = value.strip()
+        if not trimmed:
+            return None
+        lowered = trimmed.lower()
+        if lowered in {"nan", "none", "null"}:
+            return None
+        return trimmed
+    if pd.isna(value):
+        return None
+    return value
+
+
+def _select_column(column_lookup: dict[str, str], aliases: Iterable[str]) -> str | None:
+    for alias in aliases:
+        column = column_lookup.get(alias)
+        if column:
+            return column
+    return None
 
 def _infer_label(
     df: pd.DataFrame, filename: str, column_lookup: dict[str, str] | None = None
@@ -125,6 +189,68 @@ def _infer_label(
     return stem.split(".")[0]
 
 
+
+def _build_metadata(df: pd.DataFrame, column_lookup: dict[str, str]) -> TraceMetadata:
+    metadata = TraceMetadata()
+    for key, aliases in _METADATA_ALIAS_MAP.items():
+        original = _select_column(column_lookup, aliases)
+        if original is None or original not in df.columns:
+            continue
+        value = _extract_first_value(df[original])
+        if value is None:
+            continue
+        metadata.extra[key] = value
+    metadata.target = metadata.extra.get("target") or metadata.extra.get("object")
+    metadata.instrument = metadata.extra.get("instrument")
+    metadata.telescope = metadata.extra.get("telescope")
+    return metadata
+
+
+_LABEL_PRIORITY = tuple(
+    dict.fromkeys(
+        _METADATA_ALIAS_MAP.get("target", ()) + _METADATA_ALIAS_MAP.get("object", ()) + ("name",)
+    )
+)
+
+
+def _infer_label(
+    df: pd.DataFrame, filename: str, column_lookup: dict[str, str] | None = None
+) -> str:
+    lookup = column_lookup or _column_lookup(df.columns)
+    for candidate in _LABEL_PRIORITY:
+        column = lookup.get(candidate)
+        if not column:
+            continue
+        value = _extract_first_value(df[column])
+        if value is not None:
+            return str(value)
+    stem = filename.rsplit("/", 1)[-1]
+    return stem.split(".")[0]
+
+
+def _read_ascii_dataframe(file_bytes: bytes) -> pd.DataFrame:
+    text = file_bytes.decode("utf-8", errors="replace")
+    buffer = io.StringIO(text)
+    try:
+        return pd.read_csv(buffer, comment="#", sep=None, engine="python").dropna(how="all")
+    except Exception as exc:  # pragma: no cover - surfaced in tests
+        raise ASCIIIngestError(f"Failed to parse ASCII spectrum: {exc}") from exc
+
+
+def _resolve_data_columns(df: pd.DataFrame) -> tuple[str, str, str | None]:
+=======
+    column_lookup = _column_lookup(df.columns)
+
+
+    wave_column = _detect_column(df.columns, _WAVE_ALIASES)
+    if wave_column is None:
+        raise ASCIIIngestError("No wavelength column detected")
+    flux_column = _detect_column(df.columns, _FLUX_ALIASES)
+    if flux_column is None:
+        raise ASCIIIngestError("No flux/intensity column detected")
+    return wave_column, flux_column, _detect_column(df.columns, _UNCERTAINTY_ALIASES)
+
+
 def load_ascii_spectrum(file_bytes: bytes, filename: str) -> ASCIIIngestResult:
     """Load an ASCII spectrum and return the parsed arrays plus metadata."""
 
@@ -132,28 +258,13 @@ def load_ascii_spectrum(file_bytes: bytes, filename: str) -> ASCIIIngestResult:
         raise ASCIIIngestError("Empty file provided")
 
     content_hash = hashlib.sha256(file_bytes).hexdigest()
-    text = file_bytes.decode("utf-8", errors="replace")
-    buffer = io.StringIO(text)
-
-    try:
-        df = pd.read_csv(buffer, comment="#", sep=None, engine="python").dropna(how="all")
-    except Exception as exc:  # pragma: no cover - surfaced in tests
-        raise ASCIIIngestError(f"Failed to parse ASCII spectrum: {exc}") from exc
+    df = _read_ascii_dataframe(file_bytes)
 
     if df.empty:
         raise ASCIIIngestError("No rows detected in spectrum file")
 
     column_lookup = _column_lookup(df.columns)
-
-    wave_column = _detect_column(df.columns, _WAVE_ALIASES)
-    if wave_column is None:
-        raise ASCIIIngestError("No wavelength column detected")
-
-    flux_column = _detect_column(df.columns, _FLUX_ALIASES)
-    if flux_column is None:
-        raise ASCIIIngestError("No flux/intensity column detected")
-
-    uncertainty_column = _detect_column(df.columns, _UNCERTAINTY_ALIASES)
+    wave_column, flux_column, uncertainty_column = _resolve_data_columns(df)
 
     wave_name, wave_unit = _normalise_header(wave_column)
     flux_name, flux_unit = _normalise_header(flux_column)
@@ -164,6 +275,9 @@ def load_ascii_spectrum(file_bytes: bytes, filename: str) -> ASCIIIngestResult:
     uncertainties = None
     if uncertainty_column is not None:
         uncertainties = np.asarray(df[uncertainty_column], dtype=float)
+
+
+    metadata = _build_metadata(df, column_lookup)
 
     metadata = TraceMetadata()
     for column in _METADATA_COLUMNS:
@@ -177,6 +291,7 @@ def load_ascii_spectrum(file_bytes: bytes, filename: str) -> ASCIIIngestResult:
     metadata.target = metadata.extra.get("target") or metadata.extra.get("object")
     metadata.instrument = metadata.extra.get("instrument")
     metadata.telescope = metadata.extra.get("telescope")
+
 
     provenance = [
         ProvenanceEvent(
