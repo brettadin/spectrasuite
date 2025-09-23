@@ -13,8 +13,9 @@ Fresh Start" master brief and ships with:
 ## Getting Started
 
 ```bash
+cd C:/spectrasuite/spectrasuite
 python -m venv .venv
-source .venv/bin/activate
+.venv/scripts/activate
 pip install -e .[dev]
 streamlit run app/app_patched.py
 ```
