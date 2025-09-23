@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import re
+import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -58,10 +59,22 @@ class ASCIIIngestError(RuntimeError):
     pass
 
 
+def _clean_header(column: str) -> str:
+    """Trim whitespace and strip invisible formatting characters."""
+
+    stripped = column.strip()
+    if not stripped:
+        return stripped
+    # Remove zero-width and BOM characters that frequently appear in UTF-8 exports
+    cleaned = "".join(ch for ch in stripped if unicodedata.category(ch) != "Cf")
+    return cleaned
+
+
 def _normalise_header(column: str) -> tuple[str, str | None]:
-    match = _UNIT_PATTERN.match(column.strip())
+    cleaned = _clean_header(column)
+    match = _UNIT_PATTERN.match(cleaned)
     if not match:
-        return column.strip().lower(), None
+        return cleaned.lower(), None
     name = match.group("name").strip().lower()
     unit_raw = match.group("unit")
     unit = unit_raw.strip().lower() if unit_raw else None
@@ -79,7 +92,7 @@ def _detect_column(columns: Iterable[str], aliases: set[str]) -> str | None:
 def _detect_standard(column: str, unit_hint: str | None) -> bool:
     """Return True if the column name/unit hints at air wavelengths."""
 
-    column_lc = column.lower()
+    column_lc = _clean_header(column).lower()
     if _STANDARD_PATTERN.search(column_lc):
         return "air" in column_lc
     if unit_hint and _STANDARD_PATTERN.search(unit_hint.lower()):
@@ -87,10 +100,25 @@ def _detect_standard(column: str, unit_hint: str | None) -> bool:
     return False
 
 
-def _infer_label(df: pd.DataFrame, filename: str) -> str:
+def _column_lookup(columns: Iterable[str]) -> dict[str, str]:
+    """Map normalised column names to their original dataframe labels."""
+
+    lookup: dict[str, str] = {}
+    for column in columns:
+        key = _clean_header(column).lower()
+        if key and key not in lookup:
+            lookup[key] = column
+    return lookup
+
+
+def _infer_label(
+    df: pd.DataFrame, filename: str, column_lookup: dict[str, str] | None = None
+) -> str:
+    lookup = column_lookup or _column_lookup(df.columns)
     for candidate in ("target", "object", "name"):
-        if candidate in df.columns and df[candidate].notna().any():
-            value = str(df[candidate].iloc[0]).strip()
+        column = lookup.get(candidate)
+        if column and df[column].notna().any():
+            value = str(df[column].iloc[0]).strip()
             if value:
                 return value
     stem = filename.rsplit("/", 1)[-1]
@@ -115,6 +143,8 @@ def load_ascii_spectrum(file_bytes: bytes, filename: str) -> ASCIIIngestResult:
     if df.empty:
         raise ASCIIIngestError("No rows detected in spectrum file")
 
+    column_lookup = _column_lookup(df.columns)
+
     wave_column = _detect_column(df.columns, _WAVE_ALIASES)
     if wave_column is None:
         raise ASCIIIngestError("No wavelength column detected")
@@ -137,11 +167,13 @@ def load_ascii_spectrum(file_bytes: bytes, filename: str) -> ASCIIIngestResult:
 
     metadata = TraceMetadata()
     for column in _METADATA_COLUMNS:
-        if column in df.columns:
-            value = df[column].iloc[0]
-            if isinstance(value, str):
-                value = value.strip()
-            metadata.extra[column] = value
+        original = column_lookup.get(column)
+        if original is None or original not in df.columns:
+            continue
+        value = df[original].iloc[0]
+        if isinstance(value, str):
+            value = value.strip()
+        metadata.extra[column] = value
     metadata.target = metadata.extra.get("target") or metadata.extra.get("object")
     metadata.instrument = metadata.extra.get("instrument")
     metadata.telescope = metadata.extra.get("telescope")
@@ -162,7 +194,7 @@ def load_ascii_spectrum(file_bytes: bytes, filename: str) -> ASCIIIngestResult:
         )
     ]
 
-    label = _infer_label(df, filename)
+    label = _infer_label(df, filename, column_lookup)
 
     return ASCIIIngestResult(
         label=label,

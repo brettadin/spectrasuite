@@ -17,6 +17,15 @@ def test_ascii_loader_parses_units(tmp_path: Path) -> None:
     assert canonical.metadata.flux_units == "arb"
 
 
+def test_ascii_loader_handles_bom_headers() -> None:
+    content = "\ufeffWavelength (nm),Flux (arb),Target\n510.0,1.2,Example Object\n".encode("utf-8")
+    result = load_ascii_spectrum(content, "bom.csv")
+    assert result.wavelength_unit == "nm"
+    assert result.metadata.target == "Example Object"
+    canonical = canonicalize_ascii(result)
+    assert canonical.metadata.target == "Example Object"
+
+
 def test_session_deduplication() -> None:
     fixture = Path("data/examples/example_spectrum.csv")
     result = load_ascii_spectrum(fixture.read_bytes(), fixture.name)
