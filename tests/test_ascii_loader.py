@@ -18,12 +18,17 @@ def test_ascii_loader_parses_units(tmp_path: Path) -> None:
 
 
 def test_ascii_loader_handles_bom_headers() -> None:
+
     content = "\ufeffWavelength (nm),Flux (arb),Target\n510.0,1.2,Example Object\n".encode()
+
+    content = "\ufeffWavelength (nm),Flux (arb),Target\n510.0,1.2,Example Object\n".encode("utf-8")
+
     result = load_ascii_spectrum(content, "bom.csv")
     assert result.wavelength_unit == "nm"
     assert result.metadata.target == "Example Object"
     canonical = canonicalize_ascii(result)
     assert canonical.metadata.target == "Example Object"
+
 
 
 def test_ascii_loader_handles_messy_synonyms() -> None:
@@ -44,6 +49,7 @@ def test_ascii_loader_handles_messy_synonyms() -> None:
     canonical = canonicalize_ascii(result)
     assert canonical.metadata.target == "Messy Target"
     assert canonical.metadata.instrument == "Messy Instrument"
+
 
 
 def test_session_deduplication() -> None:
