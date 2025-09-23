@@ -9,9 +9,10 @@ from collections.abc import Iterable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, Literal
+from typing import Any, BinaryIO, Literal
 
 import numpy as np
+from astropy import units as u
 from astropy.io import fits
 
 from server.models import ProvenanceEvent, TraceMetadata
@@ -37,9 +38,19 @@ _FLUX_COLUMN_ALIASES = {
     "flux_jy",
 }
 
-_UNCERTAINTY_ALIASES = {"uncertainty", "unc", "sigma", "error", "err"}
+_UNCERTAINTY_ALIASES = {"uncertainty", "unc", "sigma", "error", "err", "ivar"}
 
-_UNCERTAINTY_HDU_NAMES = {"ERR", "ERROR", "UNC", "UNCERTAINTY", "SIG", "SIGMA"}
+_UNCERTAINTY_HDU_NAMES = {"ERR", "ERROR", "UNC", "UNCERTAINTY", "SIG", "SIGMA", "IVAR"}
+
+_SPECUTILS_FORMATS: tuple[str | None, ...] = (
+    None,
+    "tabular-fits",
+    "wcs1d-fits",
+    "SDSS-III/IV spec",
+    "SDSS-I/II spSpec",
+    "SDSS spPlate",
+    "iraf",
+)
 
 
 @dataclass(slots=True)
@@ -76,9 +87,28 @@ def load_fits_spectrum(
     try:
         with fits.open(io.BytesIO(data_bytes), memmap=False) as hdul:
             index, spectrum_hdu = _select_spectrum_hdu(hdul)
-            wavelength, wave_unit, wcs_params = _extract_wavelength(spectrum_hdu)
             flux, flux_unit = _extract_flux(spectrum_hdu)
+            fallback_uncertainties: np.ndarray | None = None
+            try:
+                wavelength, wave_unit, wcs_params = _extract_wavelength(hdul, index, flux.size)
+            except FITSIngestError:
+                (
+                    wavelength,
+                    wave_unit,
+                    wcs_params,
+                    flux_override,
+                    flux_unit_override,
+                    fallback_uncertainties,
+                ) = _extract_with_specutils(data_bytes, flux.size)
+                if flux_override is not None:
+                    flux = flux_override
+                if flux_unit_override is not None:
+                    flux_unit = flux_unit_override
+            if flux.size != wavelength.size:
+                raise FITSIngestError("Flux and wavelength arrays are mismatched in length")
             uncertainties = _extract_uncertainties(hdul, index, flux.size)
+            if uncertainties is None and fallback_uncertainties is not None:
+                uncertainties = fallback_uncertainties
             is_air = _detect_air_wavelength(spectrum_hdu.header, wave_unit)
             metadata = _build_metadata(spectrum_hdu.header)
     except OSError as exc:  # pragma: no cover - astropy error handling
@@ -161,47 +191,85 @@ def _extract_flux(hdu: fits.hdu.base.ExtensionHDU) -> tuple[np.ndarray, str | No
 
 
 def _extract_wavelength(
-    hdu: fits.hdu.base.ExtensionHDU,
+    hdul: fits.HDUList, index: int, length: int
 ) -> tuple[np.ndarray, str, dict[str, float | str | None]]:
+    hdu = hdul[index]
     data = hdu.data
     header = hdu.header
     if isinstance(data, fits.FITS_rec):
         columns = list(hdu.columns.names or [])
         column = _match_column(columns, _WAVE_COLUMN_ALIASES)
-        if column is None:
-            raise FITSIngestError("FITS table is missing a wavelength column")
-        values = np.asarray(data[column], dtype=float)
-        unit = _clean_unit(hdu.columns[column].unit) or _clean_unit(header.get("CUNIT1"))
-        if column.lower() in _LOG_WAVE_COLUMNS:
-            values = np.power(10.0, values)
-            unit = unit or "angstrom"
-        return values, unit or "unknown", {}
+        if column is not None:
+            values = np.asarray(data[column], dtype=float).reshape(-1)
+            unit = _clean_unit(hdu.columns[column].unit) or _clean_unit(header.get("CUNIT1"))
+            if column.lower() in _LOG_WAVE_COLUMNS:
+                values = np.power(10.0, values)
+                unit = unit or "angstrom"
+            return (
+                values,
+                unit or "unknown",
+                {
+                    "source": "column",
+                    "column": column,
+                    "extname": (hdu.name or "").strip() or "PRIMARY",
+                },
+            )
+    else:
+        array = np.asarray(data, dtype=float).reshape(-1)
+        wcs_params = _wcs_parameters(header)
+        if wcs_params is not None:
+            crval1, cdelt1, crpix1, ctype1, unit = wcs_params
+            pixels = np.arange(array.size, dtype=float)
+            wavelengths = crval1 + (pixels + 1 - crpix1) * cdelt1
+            ctype_upper = ctype1.upper()
+            if ctype_upper.startswith("LOG"):
+                wavelengths = np.power(10.0, wavelengths)
+                unit = unit or "angstrom"
+            return (
+                wavelengths,
+                unit or "unknown",
+                {
+                    "CRVAL1": crval1,
+                    "CDELT1": cdelt1,
+                    "CRPIX1": crpix1,
+                    "CTYPE1": ctype1,
+                    "CUNIT1": unit,
+                },
+            )
 
-    array = np.asarray(data, dtype=float).reshape(-1)
-    wcs_params = _wcs_parameters(header)
-    if wcs_params is None:
-        raise FITSIngestError("FITS image lacks WCS dispersion keywords")
-    crval1, cdelt1, crpix1, ctype1, unit = wcs_params
-    pixels = np.arange(array.size, dtype=float)
-    wavelengths = crval1 + (pixels + 1 - crpix1) * cdelt1
-    ctype_upper = ctype1.upper()
-    if ctype_upper.startswith("LOG"):
-        wavelengths = np.power(10.0, wavelengths)
-        unit = unit or "angstrom"
-    return (
-        wavelengths,
-        unit or "unknown",
-        {
-            "CRVAL1": crval1,
-            "CDELT1": cdelt1,
-            "CRPIX1": crpix1,
-            "CTYPE1": ctype1,
-            "CUNIT1": unit,
-        },
-    )
+    companion = _wavelength_from_companion(hdul, index, length)
+    if companion is not None:
+        return companion
+    raise FITSIngestError("FITS data lacks a wavelength definition")
 
 
 def _extract_uncertainties(hdul: fits.HDUList, skip_index: int, length: int) -> np.ndarray | None:
+    same_hdu = _uncertainty_from_table(hdul[skip_index], length)
+    if same_hdu is not None:
+        return same_hdu
+
+    for index, hdu in enumerate(hdul):
+        if index == skip_index:
+            continue
+        data = hdu.data
+        if data is None:
+            continue
+        if isinstance(data, fits.FITS_rec):
+            table_unc = _uncertainty_from_table(hdu, length)
+            if table_unc is not None:
+                return table_unc
+        else:
+            if (hdu.name or "").strip().upper() not in _UNCERTAINTY_HDU_NAMES:
+                continue
+            uncertainties = np.asarray(data, dtype=float).reshape(-1)
+            if uncertainties.size == length:
+                return uncertainties
+    return None
+
+
+def _wavelength_from_companion(
+    hdul: fits.HDUList, skip_index: int, length: int
+) -> tuple[np.ndarray, str, dict[str, float | str | None]] | None:
     for index, hdu in enumerate(hdul):
         if index == skip_index:
             continue
@@ -210,18 +278,221 @@ def _extract_uncertainties(hdul: fits.HDUList, skip_index: int, length: int) -> 
             continue
         if isinstance(data, fits.FITS_rec):
             columns = list(hdu.columns.names or [])
-            column = _match_column(columns, _UNCERTAINTY_ALIASES)
-            if column is not None:
-                uncertainties = np.asarray(data[column], dtype=float).reshape(-1)
-                if uncertainties.size == length:
-                    return uncertainties
-        else:
-            if (hdu.name or "").strip().upper() not in _UNCERTAINTY_HDU_NAMES:
+            column = _match_column(columns, _WAVE_COLUMN_ALIASES)
+            if column is None:
                 continue
-            uncertainties = np.asarray(data, dtype=float).reshape(-1)
-            if uncertainties.size == length:
-                return uncertainties
+            values = np.asarray(data[column], dtype=float).reshape(-1)
+            if values.size != length:
+                continue
+            unit = _clean_unit(hdu.columns[column].unit) or _clean_unit(hdu.header.get("CUNIT1"))
+            if column.lower() in _LOG_WAVE_COLUMNS:
+                values = np.power(10.0, values)
+                unit = unit or "angstrom"
+            return (
+                values,
+                unit or "unknown",
+                {
+                    "source": "companion_column",
+                    "index": index,
+                    "column": column,
+                    "extname": (hdu.name or "").strip() or f"HDU{index}",
+                },
+            )
+        array = np.asarray(data, dtype=float).reshape(-1)
+        if array.size != length:
+            continue
+        unit = (
+            _clean_unit(hdu.header.get("CUNIT1"))
+            or _clean_unit(hdu.header.get("BUNIT"))
+            or _clean_unit(hdu.header.get("WUNIT"))
+        )
+        return (
+            array,
+            unit or "unknown",
+            {
+                "source": "companion_hdu",
+                "index": index,
+                "extname": (hdu.name or "").strip() or f"HDU{index}",
+            },
+        )
     return None
+
+
+def _uncertainty_from_table(hdu: fits.hdu.base.ExtensionHDU, length: int) -> np.ndarray | None:
+    data = hdu.data
+    if not isinstance(data, fits.FITS_rec):
+        return None
+    columns = list(hdu.columns.names or [])
+    column = _match_column(columns, _UNCERTAINTY_ALIASES)
+    if column is None:
+        return None
+    values = np.asarray(data[column], dtype=float).reshape(-1)
+    if values.size != length:
+        return None
+    return _normalise_uncertainty_column(column, values)
+
+
+def _normalise_uncertainty_column(column: str, values: np.ndarray) -> np.ndarray:
+    lower = column.lower()
+    if lower == "ivar":
+        result = np.full(values.shape, np.nan, dtype=float)
+        positive = values > 0
+        result[positive] = 1.0 / np.sqrt(values[positive])
+        return result
+    return values
+
+
+def _extract_with_specutils(data_bytes: bytes, expected_length: int) -> tuple[
+    np.ndarray,
+    str,
+    dict[str, float | str | None],
+    np.ndarray | None,
+    str | None,
+    np.ndarray | None,
+]:
+    spectrum_cls: type[Any] | None
+    spectrum1d_cls: type[Any] | None
+    try:
+        from specutils import Spectrum as _Spectrum
+    except ImportError:  # pragma: no cover - defensive
+        spectrum_cls = None
+    else:  # pragma: no cover - import path
+        spectrum_cls = _Spectrum
+    try:
+        from specutils import Spectrum1D as _Spectrum1D
+    except ImportError:  # pragma: no cover - defensive
+        spectrum1d_cls = None
+    else:  # pragma: no cover - import path
+        spectrum1d_cls = _Spectrum1D
+
+    if spectrum_cls is None and spectrum1d_cls is None:  # pragma: no cover - defensive
+        raise FITSIngestError("specutils is required to interpret this FITS spectrum")
+
+    for fmt in _SPECUTILS_FORMATS:
+        spectrum = _read_specutils_spectrum(data_bytes, fmt, spectrum_cls, spectrum1d_cls)
+        if spectrum is None:
+            continue
+
+        flux_quantity = spectrum.flux
+        flux_values = np.asarray(
+            getattr(flux_quantity, "value", flux_quantity), dtype=float
+        ).reshape(-1)
+        flux_unit_obj = getattr(flux_quantity, "unit", None)
+
+        spectral_axis = spectrum.spectral_axis
+        axis_values = np.asarray(
+            getattr(spectral_axis, "value", spectral_axis), dtype=float
+        ).reshape(-1)
+        axis_unit_obj = getattr(spectral_axis, "unit", None)
+
+        if axis_values.size != flux_values.size:
+            if expected_length and axis_values.size == expected_length:
+                pass
+            else:
+                continue
+
+        uncertainties = _convert_specutils_uncertainty(
+            getattr(spectrum, "uncertainty", None), flux_unit_obj
+        )
+
+        return (
+            axis_values,
+            _unit_to_string(axis_unit_obj) or "unknown",
+            {"source": "specutils", "format": fmt or "auto"},
+            flux_values,
+            _unit_to_string(flux_unit_obj),
+            uncertainties,
+        )
+
+    raise FITSIngestError("Unable to determine wavelengths using specutils")
+
+
+def _read_specutils_spectrum(
+    data_bytes: bytes,
+    fmt: str | None,
+    spectrum_cls: type[Any] | None,
+    spectrum1d_cls: type[Any] | None,
+) -> Any | None:
+    readers = []
+    if spectrum_cls is not None:
+        readers.append(spectrum_cls)
+    if spectrum1d_cls is not None and spectrum1d_cls is not spectrum_cls:
+        readers.append(spectrum1d_cls)
+
+    for reader in readers:
+        buffer = io.BytesIO(data_bytes)
+        spectrum: Any | None = None
+        try:
+            if fmt is None:
+                spectrum = reader.read(buffer)
+            else:
+                spectrum = reader.read(buffer, format=fmt)
+        except Exception:  # pragma: no cover - heterogeneous upstream errors
+            spectrum = None
+        if spectrum is not None:
+            return spectrum
+    return None
+
+
+def _unit_to_string(unit: u.UnitBase | None) -> str | None:
+    if unit is None:
+        return None
+    try:
+        return unit.to_string()
+    except Exception:  # pragma: no cover - fallback for unusual units
+        return str(unit)
+
+
+def _convert_specutils_uncertainty(
+    uncertainty: object | None, flux_unit: u.UnitBase | None
+) -> np.ndarray | None:
+    values, unit = _extract_uncertainty_payload(uncertainty)
+    if values is None:
+        return None
+    if _is_inverse_variance_unit(unit, flux_unit):
+        return _inverse_variance_to_sigma(values)
+    return values
+
+
+def _extract_uncertainty_payload(
+    uncertainty: object | None,
+) -> tuple[np.ndarray | None, u.UnitBase | str | None]:
+    if uncertainty is None:
+        return None, None
+
+    quantity = getattr(uncertainty, "quantity", None)
+    if quantity is not None:
+        return (
+            np.asarray(quantity.value, dtype=float).reshape(-1),
+            getattr(quantity, "unit", None),
+        )
+
+    array = getattr(uncertainty, "array", None)
+    if array is not None:
+        return (
+            np.asarray(array, dtype=float).reshape(-1),
+            getattr(uncertainty, "unit", None),
+        )
+
+    with suppress(Exception):
+        return np.asarray(uncertainty, dtype=float).reshape(-1), None
+    return None, None
+
+
+def _is_inverse_variance_unit(unit: object | None, flux_unit: u.UnitBase | None) -> bool:
+    if unit is None or flux_unit is None:
+        return False
+    with suppress(Exception):
+        unit_obj = unit if isinstance(unit, u.UnitBase) else u.Unit(str(unit))
+        return unit_obj.is_equivalent(flux_unit**-2)
+    return False
+
+
+def _inverse_variance_to_sigma(values: np.ndarray) -> np.ndarray:
+    result = np.full(values.shape, np.nan, dtype=float)
+    positive = values > 0
+    result[positive] = 1.0 / np.sqrt(values[positive])
+    return result
 
 
 def _detect_air_wavelength(header: fits.Header, unit: str | None) -> bool:

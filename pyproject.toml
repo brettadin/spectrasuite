@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spectra-app"
-version = "0.1.0b0"
+version = "0.1.0c0"
 description = "Research-grade spectral comparison toolkit"
 readme = "README.md"
 authors = [{name = "Spectra App Team"}]
