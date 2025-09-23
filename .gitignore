@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.eggs/
+*.coverage
+coverage.xml
+htmlcov/
+.DS_Store
+*.swp
+.venv/
+.env/
+
+# Streamlit state caches
+.streamlit/

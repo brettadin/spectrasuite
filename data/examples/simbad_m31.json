@@ -1,0 +1,12 @@
+{
+  "identifier": "M 31",
+  "canonical_name": "M 31",
+  "ra": 10.6847083,
+  "dec": 41.26875,
+  "object_type": "Galaxy",
+  "aliases": ["NGC 224", "Andromeda", "Messier 31"],
+  "provenance": {
+    "source": "local_fixture",
+    "doi": "10.26093/cds/vizier"
+  }
+}

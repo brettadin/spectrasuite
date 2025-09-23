@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+      - name: Ruff
+        run: ruff check .
+      - name: Black
+        run: black --check .
+      - name: Mypy
+        run: mypy .
+      - name: Pytest
+        run: pytest
+      - name: Verify Atlas
+        run: python tools/verifiers/Verify-Atlas.py
+      - name: Verify Brains
+        run: python tools/verifiers/Verify-Brains.py
+      - name: Verify Patch Notes
+        run: python tools/verifiers/Verify-PatchNotes.py
+      - name: Verify Handoff
+        run: python tools/verifiers/Verify-Handoff.py
+      - name: Verify UI Contract
+        run: python tools/verifiers/Verify-UI-Contract.py
