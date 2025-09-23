@@ -1,8 +1,10 @@
-"""Streamlit entry point used by Streamlit CLI."""
+"""Streamlit entry point used by the Streamlit CLI."""
 
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
+from importlib import import_module
 from pathlib import Path
 
 
@@ -21,9 +23,19 @@ def _ensure_repo_on_path() -> None:
         sys.path.insert(0, repo_path)
 
 
-_ensure_repo_on_path()
+def _load_run_app() -> Callable[[], None]:
+    """Import and return ``app.ui.main.run_app`` after fixing ``sys.path``."""
+    _ensure_repo_on_path()
+    module = import_module("app.ui.main")
+    return module.run_app
 
-from app.ui.main import run_app
+
+run_app = _load_run_app()
+
+
+def main() -> None:
+    run_app()
+
 
 if __name__ == "__main__":
-    run_app()
+    main()
