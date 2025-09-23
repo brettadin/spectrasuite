@@ -1,0 +1,474 @@
+Spectra App — Fresh Start Master Brief (Authoritative Prompt for a New AI Coder)
+
+You are starting from a blank repository. Do not assume prior versions. Determine versioning yourself and record it in the continuity system defined below.
+
+
+1) Mission and Success Criteria
+
+Mission: Build a research-grade web application that lets users upload any spectrum and correctly compare it against spectra fetched from trusted archives across UV/Vis/IR. The system must preserve scientific honesty, provenance, and reproducibility.
+
+You must deliver capabilities to:
+
+	1. Ingest heterogeneous formats (CSV/TXT/FITS) and normalize into a canonical internal model.
+	2. Fetch spectra and related products from major archives (initially SIMBAD resolver, MAST, SDSS) and atomic/molecular line lists (NIST ASD initially).
+	3. Compare fairly with physically honest transforms: wavelength standard, unit conversions, resolution matching, and velocity/frame corrections.
+	4. Analyze via A−B and A/B operations with numerical safeguards.
+	5. Export the current view plus a manifest that makes the session reproducible, including citations/DOIs.
+
+Non-negotiable success criteria:
+
+	• Speed & clarity: fast plotting, minimal UI chrome, accessible and keyboard-friendly.
+	• Correct physics: canonical wavelength baseline; idempotent unit toggles; explicit air↔vacuum; resolution match; RV/frame options.
+	• Provenance everywhere: every transform logged; export must exactly reproduce the view.
+	• Line overlays that tell the truth: within-species relative heights visible (no “all sticks = max”); resolution-aware broadening optional.
+	• Documentation tab: explains how/why, data sources, usage, and legal acknowledgements.
+
+
+
+2) Technologies and Constraints
+
+	• Language: Python 3.11+ (type hints everywhere).
+	• UI Runtime: Streamlit (initially). Keep architecture UI-agnostic to allow future React.
+	• Plotting: Plotly or Altair with WebGL for large traces; preserve full-resolution data for export.
+	• Astro/data libs: Astropy, astroquery (as useful), numpy, pandas, scipy; specutils for FITS spectra.
+	• Testing: pytest; hypothesis for property tests where it makes sense.
+	• Quality gates: ruff + black + mypy; pre-commit recommended.
+	• CI: GitHub Actions for lint, type-check, tests, and the verifiers in §12.
+	• Accessibility: WCAG AA; full keyboard reachability.
+	• License: MIT or project-chosen permissive.
+	• Security: no code execution from uploads; size/time limits for I/O and network; robust parsing.
+
+
+
+3) Repository Structure (create this skeleton)
+spectra-app/
+  app/
+    app_patched.py
+    ui/
+      main.py                  # tab router + layout + global state
+      overlay.py               # overlay plot & trace manager
+      differential.py          # A−B, A/B tools
+      star_hub.py              # resolver + archive browser + citations
+      docs.py                  # in-app documentation renderer
+      components/              # shared widgets
+    state/
+      session.py               # session_state schema, serialization, cache keys
+      color_map.py
+    config/
+      version.json             # {"app_version": "<TBD>", "schema_version": 2}
+      settings.yaml            # UI defaults, feature flags
+  server/
+    ingest/
+      ascii_loader.py          # resilient CSV/TXT parser w/ header sniffing
+      fits_loader.py           # 1D spectra + metadata extraction
+      canonicalize.py          # canonical conversion to vacuum-nm, unit maps, provenance stamps
+    fetchers/
+      resolver_simbad.py       # name/coords -> canonical id, RA/Dec, aliases
+      mast.py                  # search + product arrays + citations/DOIs
+      sdss.py                  # by SpecObjID or plate-MJD-fiber
+      # future: eso.py, iacob.py, exomol.py, hitran.py
+    overlays/
+      lines.py                 # atomic/molecular queries + scaling + rendering hooks
+    math/
+      transforms.py            # units, air<->vac, T/A/τ, continuum helpers
+      resolution.py            # R/FWHM kernels; Gaussian/Voigt; FFT variants
+      differential.py          # A−B, A/B w/ ε; resampling; uncertainty rules
+      rv_frame.py              # Doppler shifts; frame tags
+    export/
+      manifest.py              # JSON schema + writer + replay stub
+  data/examples/               # tiny demo spectra + lines
+  docs/static/                 # images/md for Docs tab
+  atlas/
+  brains/
+  handoffs/
+  PATCH_NOTES/
+  tools/verifiers/
+    Verify-Atlas.py
+    Verify-Brains.py
+    Verify-PatchNotes.py
+    Verify-Handoff.py
+    Verify-UI-Contract.py
+  tests/
+  .github/workflows/ci.yml
+  pyproject.toml
+  README.md
+  LICENSE
+Do not hardcode versions. Fill version.json["app_version"] yourself when you deliver.
+
+
+
+4) Canonical Data Model
+
+Axes
+
+	• x: wavelength_vac_nm (float). Compute all other wavelength representations from this baseline, never by chained conversions.
+	• y mode (one of):
+		○ flux density Fλ (units recorded)
+		○ relative intensity (unitless)
+		○ transmission T(λ) in [0,1]
+		○ absorbance A(λ) = −log10 T
+		○ optical depth τ(λ) = −ln T
+
+Per-trace metadata (required where available)
+
+	• target, instrument, resolving power R or FWHM, wavelength standard (air/vac), flux units, pipeline version, frame (topo/helio/bary), RV, product ID/URL, DOI.
+
+Provenance log (per trace)
+
+	• unit toggles chosen; air↔vac method; normalization mode; resolution matching kernel + parameters; velocity shift; resampling; continuum ops; any inferred defaults.
+
+
+
+5) Transform Algorithms (implement precisely)
+
+Wavelength units
+
+	• Å = nm × 10; µm = nm / 1000; wavenumber σ̃(cm⁻¹) = 1e7 / nm.
+
+Air ↔ Vacuum
+
+	• Implement a standard index-of-refraction formula (e.g., Edlén/Peck). Record the method tag in provenance whenever used.
+
+Intensity family
+
+	• T = 10^(−A) = e^(−τ) and inverses; preserve numeric stability.
+
+Velocity / frame
+
+	• Nonrelativistic first pass: Δλ/λ = v/c. Record frame tags and RV, do not silently apply corrections.
+
+Resolution matching
+
+	• Convolve higher-R to lower-R: Gaussian kernel with FWHM_target = λ / R_target (approx). Allow Voigt later. Apply per-chunk where dispersion varies. Record kernel details.
+
+Resampling
+
+	• Flux-conserving binning when coarsening; safe interpolation otherwise. Keep original arrays for export.
+
+Uncertainty propagation
+
+	• Sum/diff: σ_out² = σ_A² + σ_B².
+	• Ratio: (σ_out/F_out)² = (σ_A/F_A)² + (σ_B/F_B)².
+	• Update uncertainties through convolution/resampling if present; if missing, mark as absent.
+
+
+
+6) Ingest
+
+CSV/TXT
+
+	• Robust header sniffing. Accept common synonyms for wavelength and intensity.
+	• Detect units and standardize; if ambiguous, prompt the user for a normalization policy before comparison (peak/median/area).
+	• Store a SHA-256 content hash for deduping.
+
+FITS 1D
+
+	• Prefer WCS/CUNIT or explicit array headers. Extract flux units, standard (air/vac), R or estimate, pipeline version.
+
+Deduplication
+
+	• Use (hash, declared metadata) for the ledger. Provide “ingest anyway” that does not duplicate legend entries.
+
+
+
+7) Fetchers (Adapters)
+
+Design a common adapter interface that returns:
+@dataclass
+class Product:
+    provider: str
+    product_id: str
+    title: str
+    target: str | None
+    ra: float | None
+    dec: float | None
+    wave_range_nm: tuple[float, float] | None
+    resolution_R: float | None
+    wavelength_standard: Literal["air","vacuum"] | None
+    flux_units: str | None
+    pipeline_version: str | None
+    urls: dict              # e.g. {"preview": "...", "download": "..."}
+    citation: str | None
+    doi: str | None
+    extra: dict
+SIMBAD (resolver)
+
+	• Input: name or coordinates. Output: canonical name, RA/Dec, aliases, object type. Use this to drive search in other providers.
+
+MAST
+
+	• Query by RA/Dec and mission/instrument facets; return spectroscopic products.
+	• Where pixel APIs exist, fetch wavelength/flux/error arrays directly; otherwise read the FITS product.
+	• Always capture attribution and DOI if provided.
+
+SDSS
+
+	• Fetch by SpecObjID or plate-MJD-fiber. Extract arrays, units, and metadata consistently.
+
+Line lists: NIST ASD (initial)
+
+	• Query by species. Return lines with fields: species, vacuum λ(nm), relative intensity, optional log(gf)/Aki, upper/lower levels, flags.
+
+All adapters must convert to the canonical model before returning arrays to the UI layer.
+
+
+
+8) Atomic/Molecular Line Rendering
+
+Goal: Show sticks on a secondary y-axis with perceptually meaningful heights.
+
+Scaling modes
+
+	1. Relative (per-species): H_i = k * (I_i / max I)
+	2. Quantile-robust: H_i = k * (I_i / P99(I)) to avoid a single resonance line dominating
+	3. Cross-species comparable (optional): if physical strengths (Aki/log gf) are available, allow a cross-species normalization; otherwise disable with a clear message
+
+Dynamic range control
+
+	• Optional gamma: H_i ← (H_i)^γ, where γ ∈ [0.6, 1.0], to surface mid-weak lines.
+
+Resolution awareness
+
+	• Optional broadening to the poorest visible R so sticks visually align with instrument limits.
+
+Frame/standard
+
+	• Apply the same air/vac choice and RV shift as the active plot.
+
+UI controls
+
+	• Species search; scaling mode; γ; line threshold; resolution-match toggle; Δv slider; on-hover labels (species, λ, intensity).
+
+
+
+9) Differential Engine
+
+	• Inputs: Select Trace A and Trace B (persistent selections).
+	• Ops: A−B, A/B with ε-stabilization; choose pre/post normalization; resampling control.
+	• Guards: If A == B numerically, suppress trivial zero result but allow “add anyway.”
+	• Outputs: Derived traces grouped under “Derived,” with short aliases and full provenance recorded.
+
+
+
+10) User Interface Contract
+
+Layout
+
+	• Header: title, version badge, global search, export button, quick settings.
+	• Sidebar (in this order): Examples; Display mode (Flux/Transmission/Absorbance/Continuum-norm); Units (nm/Å/µm/cm⁻¹ from canonical nm); Duplicate scope (Session/Global); Line overlays (search + mode + γ + threshold + resolution match + Δv).
+	• Tabs: Overlay | Differential | Star Hub | Docs.
+	• Footer: compact status line showing background fetch progress and timings.
+
+Overlay tab
+
+	• Fast 1D plot; pan/zoom; log/linear toggle; “jump to band” menu.
+	• Trace manager: Originals vs Derived; eye toggles; context actions: normalize, match resolution, RV shift, pin, rename.
+	• Quick analytics: coverage chips, estimated R by trace, air/vac indicator with one-click reconcile, frame badge.
+
+Star Hub
+
+	• Search box → resolver card → provider matrix filtered by RA/Dec → product table (λ range, R, air/vac, units, pipeline) → preview → add to plot.
+	• Citation panel shows exact acknowledgements and DOI(s); included in manifest.
+
+Docs tab
+
+	• Renders Markdown from docs/static/ covering: how/why, sources, usage, legal attributions, FAQ, troubleshooting.
+
+UX requirements
+
+	• 60 fps pan/zoom target with ≥10 visible traces plus sticks (use LOD decimation).
+	• Keyboard: / focus search; G then O/D/S to switch tabs; U cycle units; R match resolution; E export; Shift+↑/↓ adjust Δv.
+	• Accessibility: high contrast, focus outlines, ARIA roles, colorblind-safe palettes; do not encode meaning by color alone.
+
+
+
+11) Export & Reproducibility
+
+Export “what I see”:
+
+	• PNG of current plot.
+	• CSV for each visible trace mapped to the current x-grid.
+	• Manifest (JSON) capturing: app_version, schema_version; target identity + resolver output; provider/product IDs, URLs, DOIs, pipeline version, query params; axis units + wavelength standard; all transforms (air↔vac, unit toggles, normalization, convolution kernels and R, resampling, Δv, continuum); overlay settings and sources.
+
+Replay
+
+	• Provide a tiny script to rehydrate a session from a manifest and rebuild the view without manual steps.
+
+
+
+12) Continuity System (Mandatory Artifacts)
+
+Every coding run must update these. CI should block merges if any are missing.
+
+/atlas/ — the map
+
+	• Neutral, factual docs per subsystem: architecture overview, UI contract, data model, pipelines & transforms, fetchers (MAST/SDSS/resolver), ingest (ASCII/FITS), line overlays, export schema, performance playbook, testing smoke suite.
+	• Keep /atlas/README.md pointing at all files.
+
+/brains/ — the journal
+
+	• One file per run. Never overwrite history.
+	• Filename: v<MAJOR.MINOR.PATCH><letter>__<author>__<scope>.md (you choose version/letter).
+	• Sections: Context; Changes (paths + rationale); Decisions (tradeoffs); Tests & Evidence; Regressions Prevented; Follow-ups; Checklist (atlas/docs/tests updated).
+
+/PATCH_NOTES/ — user-facing summary
+
+	• Filename: PATCH_NOTES_v<version>(<letter>).md.
+	• Include highlights, changes, known issues, verification steps, credits (link to the brains file).
+
+/handoffs/ — AI-to-AI instructions
+
+	• Filename: HANDOFF_v<version>(<letter>).md (template in §15).
+	• Contents: concise summary of what you did; current state; prioritized next steps; references to relevant atlas/brains/notes; explicit caveats.
+	• Each new AI must read the latest handoff, not overwrite it, then write a new handoff at the end.
+
+CI Verifiers (place in tools/verifiers/):
+
+	• Verify-Atlas.py — required atlas files referenced and present; changed code implies updated atlas topics.
+	• Verify-Brains.py — code change requires a new brains file with today’s date and required sections.
+	• Verify-PatchNotes.py — version bump requires matching patch notes; version badge, version.json, and manifest agree.
+	• Verify-Handoff.py — any completed run requires a new handoff file.
+	• Verify-UI-Contract.py — headless smoke test checks sidebar items, tabs, and version badge exist.
+
+
+
+13) Testing Strategy
+
+Unit tests
+
+	• Units round-trip: nm→Å→µm→cm⁻¹→nm returns originals.
+	• Air/vac toggle moves features by the formula; provenance logs the method.
+	• Resolution match: convolving high-R to R_target yields FWHM ≈ λ/R_target (tolerance documented).
+	• Differential A=B suppression; “add anyway” path preserved.
+	• CSV/TXT sniffing handles varied column headers and delimiters.
+	• FITS reader extracts correct arrays and units from common headers.
+
+Property tests (hypothesis)
+
+	• Conversions idempotent; no drift across repeated toggles.
+	• Resampling conserves integrated flux when coarsening.
+	• Differential operations stable near zeros (ε guard effective).
+
+Integration tests
+
+	• SDSS fetch by known ID → plot with expected λ coverage.
+	• MAST fetch of a known spectroscopic product → arrays + DOI captured.
+	• NIST line fetch → sticks scale as expected; quantile mode reduces domination.
+
+Export/replay
+
+	• Manifest + replay regenerate the exact visible state and metadata.
+	• Citations render in the Docs/Citation panel and are embedded in the manifest.
+
+Performance tests
+
+	• With ≥10 traces + sticks: pan/zoom stays responsive (target frame budget ~16 ms).
+	• Large CSV ingest under defined size cap succeeds without blocking UI (worker thread/async path).
+
+
+
+14) Performance & Concurrency
+
+	• Decimation: adaptive level-of-detail when zoomed out; refine on zoom-in completion.
+	• Virtualization: only render visible table rows and legend entries.
+	• Workers: offload ingest, convolution, cross-correlation, and archive fetches to background threads/processes.
+	• Caching: in-memory LRU for active session; on-disk cache keyed by (provider, product_id, provider_version) with content hashes.
+	• No layout thrash: CSS grid, fixed panel heights to avoid reflow storms.
+
+
+
+15) Security, Error UX, Accessibility
+
+Security
+
+	• Enforce file size/time limits; sanitize filenames; never execute embedded code; validate MIME and content.
+
+Error UX
+
+	• Unit ambiguity: “Counts vs flux detected. Choose normalization policy: Peak | Median | Area.”
+	• Air/vac mismatch: “Plot is vacuum; spectrum is air. Convert?” [Convert] [Leave] [Learn]
+	• Resolution mismatch: “R varies ×N. Match to R=…?” [Yes] [No] [Always ask]
+	• Fetch failures: show provider, query, response status; expose retry.
+
+Accessibility
+
+	• High-contrast palettes; ARIA roles on tabs/tables/controls; keyboard parity for all actions; colorblind-safe defaults.
+
+
+
+16) Coding Standards
+
+	• Typed Python; pure functions in math/transform layers; clear module boundaries.
+	• Small, documented functions; no magic constants in UI or transforms.
+	• Commit messages:
+<version/letter>: <imperative summary>
+[scope] app/ui|server/fetchers|overlays|export|docs|tests
+Why: <one or two lines>
+Atlas: <files touched or 'none'>
+Brains: </brains/your_new_file.md>
+
+	• 
+	• Branching: short-lived feature branches that must pass all verifiers.
+
+
+
+17) Deliverables for 
+This Run
+ (self-determined versioning)
+
+You decide the version identifier and scope of your run. At minimum, you must:
+
+	1. Create the repo skeleton and a working minimal app with the Overlay tab and canonical unit toggles.
+	2. Implement at least one ingest path (CSV/TXT) and log provenance.
+	3. Implement Export with manifest v2 and a Replay stub.
+	4. Add initial Docs content placeholders and the continuity folders.
+	5. Produce all four continuity artifacts: updated atlas, a new brains entry, patch notes, and a new handoff file.
+
+
+
+18) AI Handoff Template (put this in 
+/handoffs/HANDOFF_TEMPLATE.md
+ and copy per run)
+# HANDOFF <version><letter> — <short scope>
+## 1) Summary of This Run
+- What was implemented, fixed, or refactored.
+- Scope assumptions and any deviations from the brief.
+## 2) Current State of the Project
+- Working features (by tab/subsystem).
+- Known bugs and edge cases.
+- Performance status (any metrics).
+- Debt and risky areas.
+## 3) Next Steps (Prioritized)
+1) <concrete task, with file paths and acceptance checks>
+2) <...>
+3) <...>
+## 4) Decisions & Rationale
+- Key choices made (algorithms, thresholds, UI behaviors) and why.
+- Alternatives considered.
+## 5) References
+- Atlas files updated: /atlas/...
+- Brains file for this run: /brains/...
+- Patch notes: /PATCH_NOTES/...
+- Related tests: /tests/...
+## 6) Quick Start for the Next AI
+- How to run locally (commands).
+- Any API keys, environment vars, or rate-limit caveats.
+- Seed data paths (e.g., /data/examples).
+
+
+
+19) Acceptance Gate (you cannot “ship” your run unless)
+
+	• Units round-trip is exact; air↔vac logs method; resolution match FWHM ≈ λ/R; A=B differential suppression; dedupe works; at least one provider fetch OK; NIST sticks scale correctly; export+replay regenerates state; Docs tab present; all four continuity artifacts exist and CI verifiers pass.
+
+
+
+20) Golden Rules (recap)
+
+	• Read latest handoff, brains, and atlas before coding.
+	• Never overwrite history; always add new files.
+	• Decide versioning yourself; keep it consistent across version.json, UI badge, manifest, brains, patch notes, and handoff.
+	• Keep the UI clean and accessible; keep the physics honest; keep exports reproducible.
+
+
+End of prompt.
