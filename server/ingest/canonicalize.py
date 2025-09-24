@@ -9,6 +9,33 @@ from server.ingest.fits_loader import FITSIngestResult
 from server.math import transforms
 from server.models import CanonicalSpectrum, ProvenanceEvent, TraceMetadata
 
+_DIRECT_UNIT_MAP: dict[str, transforms.WavelengthUnit] = {
+    "nm": "nm",
+    "nanometer": "nm",
+    "nanometers": "nm",
+    "angstrom": "angstrom",
+    "angstroms": "angstrom",
+    "a": "angstrom",
+    "aa": "angstrom",
+    "micron": "micron",
+    "microns": "micron",
+    "um": "micron",
+    "µm": "micron",
+    "wavenumber": "wavenumber",
+    "cm-1": "wavenumber",
+    "cm^-1": "wavenumber",
+}
+
+_FREQUENCY_SUBSTRINGS: tuple[tuple[transforms.WavelengthUnit, tuple[str, ...]], ...] = (
+    ("frequency_thz", ("thz", "terahertz")),
+    ("frequency_ghz", ("ghz", "gigahertz")),
+    ("frequency_mhz", ("mhz", "megahertz")),
+    ("frequency_khz", ("khz", "kilohertz")),
+)
+
+_FREQUENCY_EXACT = {"hz", "hertz"}
+_FREQUENCY_COMPACT = {"1/s", "s^-1", "sec^-1"}
+
 
 def canonicalize_ascii(result: ASCIIIngestResult) -> CanonicalSpectrum:
     """Convert an ASCII ingest result into the canonical spectral representation."""
@@ -133,14 +160,23 @@ def normalise_wavelength_unit(unit: str | None) -> transforms.WavelengthUnit:
     if not unit:
         return "nm"
     unit_lc = unit.lower()
-    if unit_lc in {"nm", "nanometer", "nanometers"}:
-        return "nm"
-    if unit_lc in {"angstrom", "angstroms", "a", "aa"}:
-        return "angstrom"
-    if unit_lc in {"micron", "microns", "um", "µm"}:
-        return "micron"
-    if unit_lc in {"wavenumber", "cm-1", "cm^-1"}:
-        return "wavenumber"
+    direct = _DIRECT_UNIT_MAP.get(unit_lc)
+    if direct:
+        return direct
+    for target, markers in _FREQUENCY_SUBSTRINGS:
+        if any(marker in unit_lc for marker in markers):
+            return target
+    compact = unit_lc.replace(" ", "")
+    if (
+        unit_lc in _FREQUENCY_EXACT
+        or compact in _FREQUENCY_COMPACT
+        or "per_second" in compact
+        or "per s" in unit_lc
+    ):
+        return "frequency_hz"
+    energy_normalised = unit_lc.replace("-", "")
+    if unit_lc in {"ev", "electronvolt"} or energy_normalised == "electronvolt":
+        return "energy_ev"
     # default to nm
     return "nm"
 

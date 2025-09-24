@@ -29,3 +29,13 @@ def test_intensity_family_round_trip() -> None:
     optical_depth = transforms.transmission_to_optical_depth(transmission)
     recovered_tau = transforms.optical_depth_to_transmission(optical_depth)
     assert np.allclose(transmission, recovered_tau)
+
+
+def test_frequency_energy_round_trip() -> None:
+    nm = np.array([400.0, 550.0, 800.0])
+    freq_thz = transforms.convert_axis_from_nm(nm, "frequency_thz")
+    back_nm_freq = transforms.convert_axis_to_nm(freq_thz, "frequency_thz")
+    assert np.allclose(nm, back_nm_freq)
+    energy_ev = transforms.convert_axis_from_nm(nm, "energy_ev")
+    back_nm_energy = transforms.convert_axis_to_nm(energy_ev, "energy_ev")
+    assert np.allclose(nm, back_nm_energy)

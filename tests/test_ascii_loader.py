@@ -7,6 +7,7 @@ import numpy as np
 from app.state.session import AppSessionState
 from server.ingest.ascii_loader import load_ascii_spectrum
 from server.ingest.canonicalize import canonicalize_ascii
+from server.math import transforms
 
 
 def test_ascii_loader_parses_units(tmp_path: Path) -> None:
@@ -109,9 +110,49 @@ def test_ascii_loader_handles_wavenumber_units() -> None:
     assert result.wavelength_unit == "cm^-1"
     assert result.flux_unit == "photons/s"
     params = result.provenance[0].parameters
-    assert params["detection_method"] == "unit_hint"
+    assert params["detection_method"] in {"aliases", "unit_hint"}
     assert params["wave_column"] == "SpatialFreq (cm^-1)"
     assert params["flux_column"] == "Signal (photons/s)"
+
+
+def test_ascii_loader_handles_frequency_unit_hints() -> None:
+    content = b"\n".join(
+        [
+            b"Axis (THz),Flux (arb),Noise",
+            b"450.0,1.0,0.05",
+            b"460.0,0.9,0.04",
+            b"",
+        ]
+    )
+    result = load_ascii_spectrum(content, "frequency.csv")
+    np.testing.assert_allclose(result.wavelength, np.array([450.0, 460.0]))
+    assert result.wavelength_unit == "thz"
+    params = result.provenance[0].parameters
+    assert params["detection_method"] == "unit_hint"
+    assert params["wave_column"] == "Axis (THz)"
+    canonical = canonicalize_ascii(result)
+    expected_nm = transforms.convert_axis_to_nm(np.array([450.0, 460.0]), "frequency_thz")
+    np.testing.assert_allclose(canonical.wavelength_vac_nm, expected_nm)
+
+
+def test_ascii_loader_handles_energy_aliases() -> None:
+    content = b"\n".join(
+        [
+            b"PhotonEnergy (eV),Signal (arb),Noise",
+            b"2.0,1.0,0.05",
+            b"2.2,0.9,0.04",
+            b"",
+        ]
+    )
+    result = load_ascii_spectrum(content, "energy.csv")
+    np.testing.assert_allclose(result.wavelength, np.array([2.0, 2.2]))
+    assert result.wavelength_unit == "ev"
+    params = result.provenance[0].parameters
+    assert params["detection_method"] in {"aliases", "unit_hint"}
+    assert params["wave_column"] == "PhotonEnergy (eV)"
+    canonical = canonicalize_ascii(result)
+    expected_nm = transforms.convert_axis_to_nm(np.array([2.0, 2.2]), "energy_ev")
+    np.testing.assert_allclose(canonical.wavelength_vac_nm, expected_nm)
 
 
 def test_ascii_loader_ignores_error_prefixed_columns() -> None:

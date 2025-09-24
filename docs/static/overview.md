@@ -9,6 +9,7 @@ and exporting manifests that replay the current view. The current build includes
 - Export bundles (manifest v2, per-trace CSVs, optional PNG) with a replay stub that
   reconstructs visible traces.
 - Fe I line overlays with scaling controls plus an offline SIMBAD resolver fixture.
+- Frequency- and energy-based uploads auto-convert to the wavelength baseline during ingest.
 
 Upcoming documentation work will expand this section with end-to-end usage guidance, data-source
 citation details, legal notices, and troubleshooting tips.
