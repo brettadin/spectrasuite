@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spectra-app"
-version = "1.0.0.dev9"
+version = "1.0.0.dev10"
 
 description = "Research-grade spectral comparison toolkit"
 readme = "README.md"

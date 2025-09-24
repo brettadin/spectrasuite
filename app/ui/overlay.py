@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import plotly.graph_objects as go
@@ -15,6 +16,7 @@ from server.ingest.ascii_loader import ASCIIIngestError, load_ascii_spectrum
 from server.ingest.canonicalize import canonicalize_ascii, canonicalize_fits
 from server.ingest.fits_loader import FITSIngestError, load_fits_spectrum
 from server.math import transforms
+from server.models import CanonicalSpectrum
 from server.overlays.lines import LineCatalog, apply_velocity_shift, scale_lines
 
 
@@ -31,6 +33,71 @@ class LineOverlaySettings:
 class OverlayRenderResult:
     figure: go.Figure | None
     overlay_settings: dict
+
+
+@dataclass(slots=True)
+class AxisSummary:
+    axis_family: str
+    detection_method: str | None = None
+    wave_unit: str | None = None
+    wave_column: str | None = None
+    headerless: bool = False
+
+
+def _extract_axis_summary(trace: CanonicalSpectrum) -> AxisSummary | None:
+    for event in trace.provenance:
+        if event.step == "ingest_ascii":
+            params: dict[str, Any] = dict(event.parameters)
+            axis_family = str(params.get("axis_family", "unknown"))
+            detection_method = params.get("detection_method")
+            wave_unit = params.get("wave_unit")
+            wave_column = params.get("wave_column")
+            headerless = bool(params.get("headerless", False))
+            column_name = str(wave_column) if wave_column is not None else None
+            unit = str(wave_unit) if wave_unit is not None else None
+            method = str(detection_method) if detection_method is not None else None
+            return AxisSummary(
+                axis_family=axis_family,
+                detection_method=method,
+                wave_unit=unit,
+                wave_column=column_name,
+                headerless=headerless,
+            )
+        if event.step == "ingest_fits":
+            params = dict(event.parameters)
+            wave_unit = params.get("wavelength_unit")
+            extname = params.get("extname")
+            hdu_index = params.get("hdu_index")
+            column: str | None = None
+            if isinstance(extname, str) and extname.strip():
+                column = extname.strip()
+            elif hdu_index is not None:
+                column = f"HDU {hdu_index}"
+            unit = str(wave_unit) if wave_unit is not None else None
+            return AxisSummary(
+                axis_family="wavelength",
+                detection_method="fits",
+                wave_unit=unit,
+                wave_column=column,
+            )
+    return None
+
+
+def _format_axis_caption(summary: AxisSummary) -> str:
+    details: list[str] = []
+    if summary.wave_unit:
+        details.append(f"unit `{summary.wave_unit}`")
+    if summary.wave_column:
+        details.append(f"column `{summary.wave_column}`")
+    if summary.detection_method:
+        pretty = summary.detection_method.replace("_", " ")
+        details.append(f"via {pretty}")
+    if summary.headerless:
+        details.append("headerless heuristic")
+    if details:
+        joined = ", ".join(details)
+        return f"Axis family: `{summary.axis_family}` ({joined})"
+    return f"Axis family: `{summary.axis_family}`"
 
 
 def _plot_lines(
@@ -72,6 +139,9 @@ def _render_trace_controls(session: AppSessionState) -> None:
             help=f"Flux units: {trace.metadata.flux_units}",
         )
         session.toggle_visibility(trace_id, checkbox)
+        summary = _extract_axis_summary(trace)
+        if summary:
+            st.caption(_format_axis_caption(summary))
 
 
 def _plot_traces(session: AppSessionState, axis_unit: XAxisUnit) -> go.Figure:
@@ -174,4 +244,9 @@ def render_overlay_tab(
     return OverlayRenderResult(figure=figure, overlay_settings=overlay_payload)
 
 
-__all__ = ["LineOverlaySettings", "OverlayRenderResult", "render_overlay_tab"]
+__all__ = [
+    "AxisSummary",
+    "LineOverlaySettings",
+    "OverlayRenderResult",
+    "render_overlay_tab",
+]
