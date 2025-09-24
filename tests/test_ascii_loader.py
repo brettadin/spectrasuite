@@ -16,6 +16,8 @@ def test_ascii_loader_parses_units(tmp_path: Path) -> None:
     result = load_ascii_spectrum(content, fixture.name)
     assert result.wavelength_unit == "nm"
     assert result.metadata.target == "Example Star"
+    params = result.provenance[0].parameters
+    assert params["axis_family"] == "wavelength"
     canonical = canonicalize_ascii(result)
     assert canonical.metadata.flux_units == "arb"
 
@@ -26,6 +28,8 @@ def test_ascii_loader_handles_bom_headers() -> None:
     result = load_ascii_spectrum(content, "bom.csv")
     assert result.wavelength_unit == "nm"
     assert result.metadata.target == "Example Object"
+    params = result.provenance[0].parameters
+    assert params["axis_family"] == "wavelength"
     canonical = canonicalize_ascii(result)
     assert canonical.metadata.target == "Example Object"
 
@@ -45,6 +49,8 @@ def test_ascii_loader_handles_messy_synonyms() -> None:
     assert result.metadata.instrument == "Messy Instrument"
     assert result.metadata.telescope == "Messy Telescope"
     assert result.metadata.extra["observer"] == "Astronomer"
+    params = result.provenance[0].parameters
+    assert params["axis_family"] == "wavelength"
     canonical = canonicalize_ascii(result)
     assert canonical.metadata.target == "Messy Target"
     assert canonical.metadata.instrument == "Messy Instrument"
@@ -73,6 +79,7 @@ def test_ascii_loader_guesses_numeric_columns() -> None:
     assert params["detection_method"] == "numeric_heuristic"
     assert params["headerless"]
     assert params["rows_retained"] == 3
+    assert params["axis_family"] == "unknown"
 
 
 def test_ascii_loader_uses_unit_hints_for_detection() -> None:
@@ -93,6 +100,7 @@ def test_ascii_loader_uses_unit_hints_for_detection() -> None:
     assert params["detection_method"] == "unit_hint"
     assert params["wave_column"] == "Channel (µm)"
     assert params["flux_column"] == "Band (erg/s/cm^2/A)"
+    assert params["axis_family"] == "wavelength"
 
 
 def test_ascii_loader_handles_wavenumber_units() -> None:
@@ -113,6 +121,7 @@ def test_ascii_loader_handles_wavenumber_units() -> None:
     assert params["detection_method"] in {"aliases", "unit_hint"}
     assert params["wave_column"] == "SpatialFreq (cm^-1)"
     assert params["flux_column"] == "Signal (photons/s)"
+    assert params["axis_family"] == "wavenumber"
 
 
 def test_ascii_loader_handles_frequency_unit_hints() -> None:
@@ -130,6 +139,7 @@ def test_ascii_loader_handles_frequency_unit_hints() -> None:
     params = result.provenance[0].parameters
     assert params["detection_method"] == "unit_hint"
     assert params["wave_column"] == "Axis (THz)"
+    assert params["axis_family"] == "frequency"
     canonical = canonicalize_ascii(result)
     expected_nm = transforms.convert_axis_to_nm(np.array([450.0, 460.0]), "frequency_thz")
     np.testing.assert_allclose(canonical.wavelength_vac_nm, expected_nm)
@@ -150,8 +160,66 @@ def test_ascii_loader_handles_energy_aliases() -> None:
     params = result.provenance[0].parameters
     assert params["detection_method"] in {"aliases", "unit_hint"}
     assert params["wave_column"] == "PhotonEnergy (eV)"
+    assert params["axis_family"] == "energy"
     canonical = canonicalize_ascii(result)
     expected_nm = transforms.convert_axis_to_nm(np.array([2.0, 2.2]), "energy_ev")
+    np.testing.assert_allclose(canonical.wavelength_vac_nm, expected_nm)
+
+
+def test_ascii_loader_handles_energy_kev_units() -> None:
+    content = b"\n".join(
+        [
+            b"PhotonEnergy (keV),Flux (arb),Noise",
+            b"2.0,1.0,0.05",
+            b"2.5,0.9,0.04",
+            b"",
+        ]
+    )
+    result = load_ascii_spectrum(content, "energy_kev.csv")
+    np.testing.assert_allclose(result.wavelength, np.array([2.0, 2.5]))
+    assert result.wavelength_unit == "kev"
+    params = result.provenance[0].parameters
+    assert params["axis_family"] == "energy"
+    canonical = canonicalize_ascii(result)
+    expected_nm = transforms.convert_axis_to_nm(np.array([2.0, 2.5]), "energy_kev")
+    np.testing.assert_allclose(canonical.wavelength_vac_nm, expected_nm)
+
+
+def test_ascii_loader_handles_energy_mev_units() -> None:
+    content = b"\n".join(
+        [
+            b"PhotonEnergy (MeV),Flux",
+            b"0.01,1.0",
+            b"0.012,0.8",
+            b"",
+        ]
+    )
+    result = load_ascii_spectrum(content, "energy_mev.csv")
+    np.testing.assert_allclose(result.wavelength, np.array([0.01, 0.012]))
+    assert result.wavelength_unit == "mev"
+    params = result.provenance[0].parameters
+    assert params["axis_family"] == "energy"
+    canonical = canonicalize_ascii(result)
+    expected_nm = transforms.convert_axis_to_nm(np.array([0.01, 0.012]), "energy_mev")
+    np.testing.assert_allclose(canonical.wavelength_vac_nm, expected_nm)
+
+
+def test_ascii_loader_handles_frequency_phz_units() -> None:
+    content = b"\n".join(
+        [
+            b"Axis (PHz),Flux",
+            b"0.45,1.0",
+            b"0.5,0.95",
+            b"",
+        ]
+    )
+    result = load_ascii_spectrum(content, "frequency_phz.csv")
+    np.testing.assert_allclose(result.wavelength, np.array([0.45, 0.5]))
+    assert result.wavelength_unit == "phz"
+    params = result.provenance[0].parameters
+    assert params["axis_family"] == "frequency"
+    canonical = canonicalize_ascii(result)
+    expected_nm = transforms.convert_axis_to_nm(np.array([0.45, 0.5]), "frequency_phz")
     np.testing.assert_allclose(canonical.wavelength_vac_nm, expected_nm)
 
 
@@ -175,3 +243,4 @@ def test_ascii_loader_ignores_error_prefixed_columns() -> None:
     assert params["wave_column"] == "Wavelength (nm)"
     assert params["flux_column"] == "Flux"
     assert params["uncertainty_column"] == "Flux_Error"
+    assert params["axis_family"] == "wavelength"

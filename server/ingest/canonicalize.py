@@ -27,6 +27,7 @@ _DIRECT_UNIT_MAP: dict[str, transforms.WavelengthUnit] = {
 }
 
 _FREQUENCY_SUBSTRINGS: tuple[tuple[transforms.WavelengthUnit, tuple[str, ...]], ...] = (
+    ("frequency_phz", ("phz", "petahertz")),
     ("frequency_thz", ("thz", "terahertz")),
     ("frequency_ghz", ("ghz", "gigahertz")),
     ("frequency_mhz", ("mhz", "megahertz")),
@@ -174,9 +175,13 @@ def normalise_wavelength_unit(unit: str | None) -> transforms.WavelengthUnit:
         or "per s" in unit_lc
     ):
         return "frequency_hz"
-    energy_normalised = unit_lc.replace("-", "")
+    energy_normalised = unit_lc.replace("-", "").replace("_", "").replace(" ", "")
     if unit_lc in {"ev", "electronvolt"} or energy_normalised == "electronvolt":
         return "energy_ev"
+    if unit_lc in {"kev", "kiloelectronvolt"} or energy_normalised == "kiloelectronvolt":
+        return "energy_kev"
+    if unit_lc in {"mev", "megaelectronvolt"} or energy_normalised == "megaelectronvolt":
+        return "energy_mev"
     # default to nm
     return "nm"
 

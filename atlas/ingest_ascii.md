@@ -13,8 +13,8 @@
 - Error channels: uncertainty-like headers (`*_error`, `*_sigma`, `noise`, etc.) are detected first and
   excluded from wavelength/flux selection so detection no longer latches onto `Flux_Error`/`Wavelength_Error`
   when the primary columns trail them in the file.
-- Frequency/energy axes: unit hints cover Hz/THz/eV labels so frequency- or energy-based exports resolve
-  to the wavelength axis before canonical conversion.
+- Frequency/energy axes: unit hints cover Hz→PHz and eV/keV/MeV labels so frequency- or energy-based
+  exports resolve to the wavelength axis before canonical conversion.
 - Units: header text inside parentheses/brackets is parsed and canonicalised (µm → `um`, Å → `angstrom`);
   when numeric heuristics select the columns we still surface `unknown` to avoid leaking placeholder
   headers like `column_0`.
@@ -32,5 +32,6 @@
   null-like strings filtered; promoted into `TraceMetadata.target`/`instrument`/`telescope`.
 - Hash: SHA-256 of raw bytes stored for dedup ledger.
 - Provenance: `ingest_ascii` records whether detection relied on `aliases`, `unit_hint`, or
-  `numeric_heuristic`, whether the upload was headerless, how many rows were retained, plus filename,
-  columns, units, the air flag, and content hash.
+  `numeric_heuristic`, the interpreted axis family (`wavelength`/`wavenumber`/`frequency`/`energy`),
+  whether the upload was headerless, how many rows were retained, plus filename, columns, units, the air
+  flag, and content hash.
