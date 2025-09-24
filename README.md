@@ -6,6 +6,7 @@ Fresh Start" master brief and ships with:
 
 - A canonical wavelength baseline (vacuum nanometers) with reversible unit toggles.
 - Robust ASCII and FITS ingestion with provenance logging and deduplication.
+- Overlay trace manager surfaces axis-family classifications and detection methods for quick debugging.
 - Export bundles that reproduce the visible state via a manifest (schema v2).
 - Continuity artifacts in `/atlas`, `/brains`, `/PATCH_NOTES`, and `/handoffs` to keep every
   run auditable.
