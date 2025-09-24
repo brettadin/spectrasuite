@@ -13,6 +13,8 @@
 - Error channels: uncertainty-like headers (`*_error`, `*_sigma`, `noise`, etc.) are detected first and
   excluded from wavelength/flux selection so detection no longer latches onto `Flux_Error`/`Wavelength_Error`
   when the primary columns trail them in the file.
+- Frequency/energy axes: unit hints cover Hz/THz/eV labels so frequency- or energy-based exports resolve
+  to the wavelength axis before canonical conversion.
 - Units: header text inside parentheses/brackets is parsed and canonicalised (µm → `um`, Å → `angstrom`);
   when numeric heuristics select the columns we still surface `unknown` to avoid leaking placeholder
   headers like `column_0`.

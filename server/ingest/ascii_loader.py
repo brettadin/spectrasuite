@@ -51,6 +51,12 @@ _WAVE_ALIASES = (
     "channels",
     "pixel",
     "pixels",
+    "frequency",
+    "frequencies",
+    "freq",
+    "nu",
+    "energy",
+    "energies",
 )
 
 _FLUX_ALIASES = (
@@ -146,6 +152,12 @@ _WAVE_PREFERRED_TOKENS = {
     "channels",
     "pixel",
     "pixels",
+    "frequency",
+    "frequencies",
+    "freq",
+    "nu",
+    "energy",
+    "energies",
 }
 
 _FLUX_PREFERRED_TOKENS = {
@@ -194,6 +206,19 @@ _WAVE_UNIT_HINTS = (
     "cm_1",
     "per_cm",
     "inverse_cm",
+    "hz",
+    "hertz",
+    "khz",
+    "mhz",
+    "ghz",
+    "thz",
+    "s_1",
+    "1_s",
+    "per_s",
+    "ev",
+    "e_v",
+    "electronvolt",
+    "electron_volt",
 )
 
 _FLUX_UNIT_HINTS = (
