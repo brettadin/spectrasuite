@@ -17,7 +17,10 @@ WavelengthUnit = Literal[
     "frequency_mhz",
     "frequency_ghz",
     "frequency_thz",
+    "frequency_phz",
     "energy_ev",
+    "energy_kev",
+    "energy_mev",
 ]
 IntensityMode = Literal[
     "flux_density",
@@ -30,6 +33,8 @@ IntensityMode = Literal[
 _C = 299_792.458  # km / s
 _C_M_PER_S = 299_792_458.0
 _HC_EV_NM = 1239.8419843320026
+_EV_PER_KEV = 1_000.0
+_EV_PER_MEV = 1_000_000.0
 
 
 def nm_to_angstrom(wavelength_nm: np.ndarray | float) -> np.ndarray:
@@ -80,19 +85,19 @@ def nm_to_frequency(wavelength_nm: np.ndarray | float, *, scale: float = 1.0) ->
     return frequency_hz / scale
 
 
-def energy_ev_to_nm(energy_ev: np.ndarray | float) -> np.ndarray:
-    energy = np.asarray(energy_ev, dtype=float)
+def _energy_to_nm(energy: np.ndarray | float, *, ev_per_unit: float) -> np.ndarray:
+    energy_ev = np.asarray(energy, dtype=float) * ev_per_unit
     with np.errstate(divide="ignore", invalid="ignore"):
         wavelength_nm = np.divide(
             _HC_EV_NM,
-            energy,
-            out=np.full_like(energy, np.inf, dtype=float),
-            where=energy != 0.0,
+            energy_ev,
+            out=np.full_like(energy_ev, np.inf, dtype=float),
+            where=energy_ev != 0.0,
         )
     return wavelength_nm
 
 
-def nm_to_energy_ev(wavelength_nm: np.ndarray | float) -> np.ndarray:
+def _nm_to_energy(wavelength_nm: np.ndarray | float, *, ev_per_unit: float) -> np.ndarray:
     wavelength = np.asarray(wavelength_nm, dtype=float)
     with np.errstate(divide="ignore", invalid="ignore"):
         energy_ev = np.divide(
@@ -101,7 +106,31 @@ def nm_to_energy_ev(wavelength_nm: np.ndarray | float) -> np.ndarray:
             out=np.full_like(wavelength, np.inf, dtype=float),
             where=wavelength != 0.0,
         )
-    return energy_ev
+    return energy_ev / ev_per_unit
+
+
+def energy_ev_to_nm(energy_ev: np.ndarray | float) -> np.ndarray:
+    return _energy_to_nm(energy_ev, ev_per_unit=1.0)
+
+
+def nm_to_energy_ev(wavelength_nm: np.ndarray | float) -> np.ndarray:
+    return _nm_to_energy(wavelength_nm, ev_per_unit=1.0)
+
+
+def energy_kev_to_nm(energy_kev: np.ndarray | float) -> np.ndarray:
+    return _energy_to_nm(energy_kev, ev_per_unit=_EV_PER_KEV)
+
+
+def nm_to_energy_kev(wavelength_nm: np.ndarray | float) -> np.ndarray:
+    return _nm_to_energy(wavelength_nm, ev_per_unit=_EV_PER_KEV)
+
+
+def energy_mev_to_nm(energy_mev: np.ndarray | float) -> np.ndarray:
+    return _energy_to_nm(energy_mev, ev_per_unit=_EV_PER_MEV)
+
+
+def nm_to_energy_mev(wavelength_nm: np.ndarray | float) -> np.ndarray:
+    return _nm_to_energy(wavelength_nm, ev_per_unit=_EV_PER_MEV)
 
 
 _CONVERT_FROM_NM: dict[WavelengthUnit, Callable[[np.ndarray], np.ndarray]] = {
@@ -114,7 +143,10 @@ _CONVERT_FROM_NM: dict[WavelengthUnit, Callable[[np.ndarray], np.ndarray]] = {
     "frequency_mhz": lambda values: nm_to_frequency(values, scale=1e6),
     "frequency_ghz": lambda values: nm_to_frequency(values, scale=1e9),
     "frequency_thz": lambda values: nm_to_frequency(values, scale=1e12),
+    "frequency_phz": lambda values: nm_to_frequency(values, scale=1e15),
     "energy_ev": nm_to_energy_ev,
+    "energy_kev": nm_to_energy_kev,
+    "energy_mev": nm_to_energy_mev,
 }
 
 _CONVERT_TO_NM: dict[WavelengthUnit, Callable[[np.ndarray], np.ndarray]] = {
@@ -127,7 +159,10 @@ _CONVERT_TO_NM: dict[WavelengthUnit, Callable[[np.ndarray], np.ndarray]] = {
     "frequency_mhz": lambda values: frequency_to_nm(values, scale=1e6),
     "frequency_ghz": lambda values: frequency_to_nm(values, scale=1e9),
     "frequency_thz": lambda values: frequency_to_nm(values, scale=1e12),
+    "frequency_phz": lambda values: frequency_to_nm(values, scale=1e15),
     "energy_ev": energy_ev_to_nm,
+    "energy_kev": energy_kev_to_nm,
+    "energy_mev": energy_mev_to_nm,
 }
 
 

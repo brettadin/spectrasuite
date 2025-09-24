@@ -212,6 +212,10 @@ _WAVE_UNIT_HINTS = (
     "mhz",
     "ghz",
     "thz",
+    "phz",
+    "p_hz",
+    "petahertz",
+    "peta_hertz",
     "s_1",
     "1_s",
     "per_s",
@@ -219,6 +223,14 @@ _WAVE_UNIT_HINTS = (
     "e_v",
     "electronvolt",
     "electron_volt",
+    "kev",
+    "ke_v",
+    "kiloelectronvolt",
+    "kilo_electron_volt",
+    "mev",
+    "me_v",
+    "megaelectronvolt",
+    "mega_electron_volt",
 )
 
 _FLUX_UNIT_HINTS = (
@@ -468,6 +480,92 @@ def _detect_standard(column: str, unit_hint: str | None) -> bool:
     if unit_hint and _STANDARD_PATTERN.search(unit_hint.lower()):
         return "air" in unit_hint.lower()
     return False
+
+
+def _classify_axis_family(
+    wave_column: str,
+    wave_name: str,
+    wave_unit: str | None,
+    *,
+    headerless: bool,
+) -> str:
+    if headerless:
+        return "unknown"
+    header = _clean_header(str(wave_column))
+    if _is_numeric_token(header):
+        return "unknown"
+    unit_text = (wave_unit or "").strip().lower()
+    unit_compact = unit_text.replace(" ", "").replace("_", "").replace("-", "").replace("^", "")
+    tokens = set(_tokenize(wave_name))
+    if wave_unit:
+        tokens.update(_tokenize(_canonicalise_name(wave_unit)))
+    tokens.update(_tokenize(_canonicalise_name(header)))
+    energy_tokens = {
+        "energy",
+        "energies",
+        "photonenergy",
+        "photon",
+        "ev",
+        "e_v",
+        "kev",
+        "ke_v",
+        "mev",
+        "me_v",
+        "electronvolt",
+        "kiloelectronvolt",
+        "megaelectronvolt",
+    }
+    frequency_tokens = {
+        "frequency",
+        "frequencies",
+        "freq",
+        "nu",
+        "hz",
+        "khz",
+        "mhz",
+        "ghz",
+        "thz",
+        "phz",
+        "p_hz",
+    }
+    wavenumber_tokens = {
+        "wavenumber",
+        "wavenumbers",
+        "cm_1",
+        "inverse_cm",
+        "per_cm",
+        "spatialfreq",
+    }
+    if energy_tokens & tokens or any(
+        marker in unit_compact
+        for marker in ("kev", "mev", "ev", "electronvolt", "kiloelectronvolt", "megaelectronvolt")
+    ):
+        return "energy"
+    if wavenumber_tokens & tokens or any(
+        marker in unit_compact for marker in ("cm-1", "cm^-1", "cm1")
+    ):
+        return "wavenumber"
+    if frequency_tokens & tokens or any(
+        marker in unit_compact
+        for marker in (
+            "hz",
+            "khz",
+            "mhz",
+            "ghz",
+            "thz",
+            "phz",
+            "s^-1",
+            "sec^-1",
+            "persec",
+            "persecond",
+            "1/s",
+            "1s",
+        )
+    ):
+        return "frequency"
+    if tokens:
+        return "wavelength"
+    return "unknown"
 
 
 def _column_lookup(columns: Iterable[str]) -> dict[str, str]:
@@ -770,6 +868,12 @@ def load_ascii_spectrum(file_bytes: bytes, filename: str) -> ASCIIIngestResult:
     wave_name, wave_unit = _normalise_header(wave_column)
     _, flux_unit = _normalise_header(flux_column)
     is_air = _detect_standard(wave_column, wave_unit)
+    axis_family = _classify_axis_family(
+        wave_column,
+        wave_name,
+        wave_unit,
+        headerless=headerless,
+    )
 
     wavelength = _to_numeric_array(df[wave_column])
     flux = _to_numeric_array(df[flux_column])
@@ -805,6 +909,7 @@ def load_ascii_spectrum(file_bytes: bytes, filename: str) -> ASCIIIngestResult:
                 "flux_unit": flux_unit or "unknown",
                 "is_air": is_air,
                 "detection_method": detection_method,
+                "axis_family": axis_family,
                 "headerless": headerless,
                 "rows_total": total_rows,
                 "rows_retained": retained_rows,

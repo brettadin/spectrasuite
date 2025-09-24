@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from server.ingest.ascii_loader import load_ascii_spectrum
-from server.ingest.canonicalize import canonicalize_ascii
+from server.ingest.canonicalize import canonicalize_ascii, normalise_wavelength_unit
 
 
 def test_air_to_vacuum_provenance() -> None:
@@ -11,3 +11,9 @@ def test_air_to_vacuum_provenance() -> None:
     steps = [event.step for event in canonical.provenance]
     assert "air_to_vacuum" in steps
     assert canonical.metadata.wavelength_standard == "vacuum"
+
+
+def test_normalise_wavelength_unit_extended_energy() -> None:
+    assert normalise_wavelength_unit("keV") == "energy_kev"
+    assert normalise_wavelength_unit("MeV") == "energy_mev"
+    assert normalise_wavelength_unit("PHz") == "frequency_phz"
