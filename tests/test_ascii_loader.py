@@ -111,3 +111,25 @@ def test_ascii_loader_handles_wavenumber_units() -> None:
     assert params["detection_method"] == "unit_hint"
     assert params["wave_column"] == "SpatialFreq (cm^-1)"
     assert params["flux_column"] == "Signal (photons/s)"
+
+
+def test_ascii_loader_ignores_error_prefixed_columns() -> None:
+    content = b"\n".join(
+        [
+            b"Wavelength_Error (nm),Wavelength (nm),Flux_Error,Flux,Note",
+            b"0.1,5100,0.05,1.2,first",
+            b"0.2,5110,0.04,1.1,second",
+            b"0.3,5120,0.03,1.05,third",
+            b"",
+        ]
+    )
+    result = load_ascii_spectrum(content, "errors_first.csv")
+    np.testing.assert_allclose(result.wavelength, np.array([5100.0, 5110.0, 5120.0]))
+    np.testing.assert_allclose(result.flux, np.array([1.2, 1.1, 1.05]))
+    assert result.uncertainties is not None
+    np.testing.assert_allclose(result.uncertainties, np.array([0.05, 0.04, 0.03]))
+    params = result.provenance[0].parameters
+    assert params["detection_method"] == "aliases"
+    assert params["wave_column"] == "Wavelength (nm)"
+    assert params["flux_column"] == "Flux"
+    assert params["uncertainty_column"] == "Flux_Error"

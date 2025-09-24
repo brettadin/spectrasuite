@@ -10,6 +10,9 @@
   `Flux_Total`/`fluxDensity`/`noise` resolve) before we fall back to unit hints (µm/Å/cm⁻¹ for wavelength,
   erg/Jy/photons/arb for flux) and finally numeric heuristics (monotonic ramp ≈ wavelength, remaining
   numeric column ≈ flux) so bare or oddly labelled exports still ingest.
+- Error channels: uncertainty-like headers (`*_error`, `*_sigma`, `noise`, etc.) are detected first and
+  excluded from wavelength/flux selection so detection no longer latches onto `Flux_Error`/`Wavelength_Error`
+  when the primary columns trail them in the file.
 - Units: header text inside parentheses/brackets is parsed and canonicalised (µm → `um`, Å → `angstrom`);
   when numeric heuristics select the columns we still surface `unknown` to avoid leaking placeholder
   headers like `column_0`.

@@ -47,6 +47,10 @@ _WAVE_ALIASES = (
     "um",
     "angstrom",
     "angstroms",
+    "channel",
+    "channels",
+    "pixel",
+    "pixels",
 )
 
 _FLUX_ALIASES = (
@@ -58,6 +62,8 @@ _FLUX_ALIASES = (
     "flux_corr",
     "intensity",
     "intensities",
+    "signal",
+    "signals",
     "counts",
     "count_rate",
     "adu",
@@ -68,6 +74,14 @@ _FLUX_ALIASES = (
     "flambda",
     "fnu",
     "f_nu",
+    "reflectance",
+    "transmission",
+    "transmittance",
+    "absorbance",
+    "radiance",
+    "brightness",
+    "response",
+    "throughput",
 )
 
 _UNCERTAINTY_ALIASES = (
@@ -93,7 +107,72 @@ _UNCERTAINTY_ALIASES = (
     "rms",
 )
 
-_SHORT_EXACT_ALIASES = {"nm", "um", "aa"}
+_AMBIGUOUS_TOKENS = {
+    "error",
+    "errors",
+    "err",
+    "unc",
+    "uncert",
+    "uncertainty",
+    "uncertainties",
+    "sigma",
+    "sigmas",
+    "std",
+    "stddev",
+    "stdev",
+    "st_dev",
+    "variance",
+    "var",
+    "noise",
+    "rms",
+}
+
+_WAVE_PREFERRED_TOKENS = {
+    "wave",
+    "wavelength",
+    "wavelengths",
+    "lambda",
+    "angstrom",
+    "micron",
+    "nanometer",
+    "nanometre",
+    "nanometers",
+    "nanometres",
+    "um",
+    "aa",
+    "wavenumber",
+    "wavenumbers",
+    "channel",
+    "channels",
+    "pixel",
+    "pixels",
+}
+
+_FLUX_PREFERRED_TOKENS = {
+    "flux",
+    "fluxdensity",
+    "intensity",
+    "intensities",
+    "signal",
+    "signals",
+    "count",
+    "counts",
+    "adu",
+    "adu_rate",
+    "radiance",
+    "brightness",
+    "reflectance",
+    "transmission",
+    "transmittance",
+    "absorbance",
+    "throughput",
+    "response",
+    "photon",
+    "photons",
+    "band",
+    "spectrum",
+    "value",
+}
 
 _WAVE_UNIT_HINTS = (
     "nm",
@@ -251,38 +330,80 @@ def _describe_columns(columns: Iterable[str]) -> list[_ColumnInfo]:
     return infos
 
 
-def _matches_alias(info: _ColumnInfo, alias_tokens: tuple[str, ...]) -> bool:
+def _alias_match_score(
+    info: _ColumnInfo,
+    alias_tokens: tuple[str, ...],
+    *,
+    preferred_tokens: set[str],
+    penalty_tokens: set[str],
+) -> int | None:
     if not alias_tokens:
-        return False
+        return None
     candidate_tokens = info.tokens or (() if not info.canonical else (info.canonical,))
     if not candidate_tokens:
-        return False
-    if candidate_tokens == alias_tokens:
-        return True
-    alias_len = len(alias_tokens)
-    if alias_len == 1:
-        alias_token = alias_tokens[0]
-        if alias_token in _SHORT_EXACT_ALIASES:
-            return candidate_tokens == alias_tokens
-        return alias_token in candidate_tokens
-    candidate_set = set(candidate_tokens)
-    alias_set = set(alias_tokens)
-    return alias_set.issubset(candidate_set)
+        return None
+
+    candidate_tuple = tuple(candidate_tokens)
+    alias_tuple = tuple(alias_tokens)
+    alias_set = set(alias_tuple)
+    candidate_set = set(candidate_tuple)
+
+    checks: tuple[tuple[bool, int], ...] = (
+        (candidate_tuple == alias_tuple, 100),
+        (info.canonical == "_".join(alias_tuple), 95),
+        (
+            len(candidate_tuple) > len(alias_tuple)
+            and candidate_tuple[: len(alias_tuple)] == alias_tuple,
+            90,
+        ),
+        (alias_set == candidate_set, 85),
+        (alias_set.issubset(candidate_set), 70),
+    )
+
+    base = next((value for matched, value in checks if matched), None)
+    if base is None:
+        return None
+
+    score = base - len(candidate_tuple)
+    if penalty_tokens and candidate_set & penalty_tokens:
+        score -= 25
+    if preferred_tokens and candidate_set & preferred_tokens:
+        score += 10
+    return score
 
 
 def _detect_column(
-    infos: Iterable[_ColumnInfo], aliases: Iterable[str], *, exclude: Iterable[str] | None = None
+    infos: Iterable[_ColumnInfo],
+    aliases: Iterable[str],
+    *,
+    exclude: Iterable[str] | None = None,
+    preferred_tokens: Iterable[str] | None = None,
+    penalty_tokens: Iterable[str] | None = None,
 ) -> str | None:
     excluded = set(exclude or ())
-    for alias in aliases:
+    preferred = set(preferred_tokens or ())
+    penalties = set(penalty_tokens or ())
+    best: tuple[int, int, int, str] | None = None
+    for alias_index, alias in enumerate(aliases):
         tokens = _tokenize(alias)
         if not tokens:
             continue
-        for info in infos:
+        for info_index, info in enumerate(infos):
             if info.original in excluded:
                 continue
-            if _matches_alias(info, tokens):
-                return info.original
+            score = _alias_match_score(
+                info,
+                tokens,
+                preferred_tokens=preferred,
+                penalty_tokens=penalties,
+            )
+            if score is None:
+                continue
+            candidate = (score, -alias_index, -info_index, info.original)
+            if best is None or candidate > best:
+                best = candidate
+    if best:
+        return best[-1]
     return None
 
 
@@ -304,6 +425,19 @@ def _detect_by_unit(
             if hint in info.canonical_unit or hint in info.unit_tokens:
                 return info.original
     return None
+
+
+def _apply_unit_hint(
+    current: str | None,
+    infos: Iterable[_ColumnInfo],
+    hints: Iterable[str],
+    *,
+    exclude: Iterable[str] | None = None,
+) -> tuple[str | None, bool]:
+    if current is not None:
+        return current, False
+    candidate = _detect_by_unit(infos, hints, exclude=exclude)
+    return candidate, candidate is not None
 
 
 def _detect_standard(column: str, unit_hint: str | None) -> bool:
@@ -534,37 +668,50 @@ def _resolve_data_columns(
     df: pd.DataFrame,
 ) -> tuple[str, str, str | None, str]:
     infos = _describe_columns(df.columns)
-    wave_column = _detect_column(infos, _WAVE_ALIASES)
-    flux_column = _detect_column(
-        infos, _FLUX_ALIASES, exclude=[wave_column] if wave_column else None
-    )
     uncertainty_column = _detect_column(
         infos,
         _UNCERTAINTY_ALIASES,
-        exclude=[column for column in (wave_column, flux_column) if column],
+        preferred_tokens=_FLUX_PREFERRED_TOKENS,
+    )
+    wave_column = _detect_column(
+        infos,
+        _WAVE_ALIASES,
+        exclude=[uncertainty_column] if uncertainty_column else None,
+        preferred_tokens=_WAVE_PREFERRED_TOKENS,
+        penalty_tokens=_AMBIGUOUS_TOKENS,
+    )
+    flux_column = _detect_column(
+        infos,
+        _FLUX_ALIASES,
+        exclude=[column for column in (wave_column, uncertainty_column) if column],
+        preferred_tokens=_FLUX_PREFERRED_TOKENS,
+        penalty_tokens=_AMBIGUOUS_TOKENS,
     )
 
     used_unit_hint = False
-    if wave_column is None:
-        candidate = _detect_by_unit(
-            infos, _WAVE_UNIT_HINTS, exclude=[flux_column] if flux_column else None
-        )
-        if candidate:
-            wave_column = candidate
-            used_unit_hint = True
-    if flux_column is None:
-        candidate = _detect_by_unit(
-            infos, _FLUX_UNIT_HINTS, exclude=[wave_column] if wave_column else None
-        )
-        if candidate:
-            flux_column = candidate
-            used_unit_hint = True
+    wave_column, hinted = _apply_unit_hint(
+        wave_column,
+        infos,
+        _WAVE_UNIT_HINTS,
+        exclude=[column for column in (flux_column, uncertainty_column) if column],
+    )
+    used_unit_hint |= hinted
+    flux_column, hinted = _apply_unit_hint(
+        flux_column,
+        infos,
+        _FLUX_UNIT_HINTS,
+        exclude=[column for column in (wave_column, uncertainty_column) if column],
+    )
+    used_unit_hint |= hinted
 
     detection_method = "aliases"
     if wave_column is None or flux_column is None:
         detection_method = "numeric_heuristic"
+        stats_source = df
+        if uncertainty_column and uncertainty_column in df.columns:
+            stats_source = df.drop(columns=[uncertainty_column])
         stats = _numeric_column_stats(
-            df,
+            stats_source,
             ensure=[column for column in (wave_column, flux_column) if column is not None],
         )
         if len(stats) < 2 and (wave_column is None or flux_column is None):
