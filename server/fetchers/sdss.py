@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import textwrap
 from collections.abc import Iterable
 from contextlib import suppress
-import textwrap
+from string import Template
 from typing import Any
 
 import numpy as np
@@ -191,69 +192,120 @@ def search_spectra(
     class_: str | Iterable[str] | None = None,
     class_filter: str | Iterable[str] | None = None,
 ) -> Iterable[Product]:
-    """Search for SDSS spectra near coordinates.
-
-    Parameters mirror the earlier implementation while routing any class filter
-    through the keyword accepted by astroquery (``class`` via SQL).
-    """
+    """Search for SDSS spectra near coordinates."""
 
     if SDSS is None:
         raise RuntimeError("astroquery.sdss is not available")
-    radius = float(radius_arcsec)
-    if radius <= 0:
+
+    radius_arcmin = _normalise_radius(radius_arcsec)
+    if radius_arcmin is None:
         return []
-    max_results = int(limit)
-    if max_results <= 0:
+
+    max_results = _normalise_limit(limit)
+    if max_results is None:
         return []
-    try:
-        ra_value = float(ra)
-        dec_value = float(dec)
-    except (TypeError, ValueError) as exc:  # pragma: no cover - defensive guard
-        raise ValueError("RA and Dec must be finite floats") from exc
 
-    filter_values = _normalise_class_filter(class_)
-    if not filter_values:
-        filter_values = _normalise_class_filter(class_filter)
-
-    radius_arcmin = radius / 60.0
-    # SDSS cone searches cap the radius at ~3 arcmin; avoid exceeding the
-    # server-side constraint to keep queries predictable.
-    if radius_arcmin > 3.0:
-        radius_arcmin = 3.0
-
-    class_clause = ""
-    if filter_values:
-        joined = ", ".join(f"'{item}'" for item in filter_values)
-        class_clause = f" AND s.class IN ({joined})"
-
-    sql = textwrap.dedent(
-        f"""
-        SELECT TOP {max_results}
-            s.specObjID AS specobjid,
-            s.ra,
-            s.dec,
-            s.plate,
-            s.mjd,
-            s.fiberID,
-            s.run2d,
-            s.run1d,
-            s.programname,
-            s.survey,
-            s.instrument,
-            s.class,
-            s.z
-        FROM SpecObjAll AS s
-        JOIN dbo.fGetNearbySpecObjEq({ra_value:.8f}, {dec_value:.8f}, {radius_arcmin:.6f}) AS nearby
-            ON nearby.specObjID = s.specObjID
-        WHERE s.sciencePrimary = 1{class_clause}
-        ORDER BY nearby.distance
-        """
-    ).strip()
+    ra_value, dec_value = _coerce_coordinates(ra, dec)
+    filter_values = _select_filters(class_, class_filter)
+    class_clause = _build_class_clause(filter_values)
+    sql = _build_search_sql(max_results, ra_value, dec_value, radius_arcmin, class_clause)
 
     table = SDSS.query_sql(sql)
     if table is None or len(table) == 0:
         return []
 
+    return _iter_products(table)
+
+
+def _normalise_radius(radius_arcsec: float) -> float | None:
+    try:
+        radius = float(radius_arcsec)
+    except (TypeError, ValueError):
+        return None
+    if radius <= 0:
+        return None
+    radius_arcmin = radius / 60.0
+    return min(radius_arcmin, 3.0)
+
+
+def _normalise_limit(limit: int) -> int | None:
+    try:
+        max_results = int(limit)
+    except (TypeError, ValueError):
+        return None
+    if max_results <= 0:
+        return None
+    return max_results
+
+
+def _coerce_coordinates(ra: float, dec: float) -> tuple[float, float]:
+    try:
+        ra_value = float(ra)
+        dec_value = float(dec)
+    except (TypeError, ValueError) as exc:  # pragma: no cover - defensive guard
+        raise ValueError("RA and Dec must be finite floats") from exc
+    return ra_value, dec_value
+
+
+def _select_filters(
+    class_: str | Iterable[str] | None, class_filter: str | Iterable[str] | None
+) -> tuple[str, ...]:
+    primary = tuple(_normalise_class_filter(class_))
+    if primary:
+        return primary
+    return tuple(_normalise_class_filter(class_filter))
+
+
+def _build_class_clause(filter_values: tuple[str, ...]) -> str:
+    if not filter_values:
+        return ""
+    joined = ", ".join(f"'{item}'" for item in filter_values)
+    return f" AND s.class IN ({joined})"
+
+
+def _build_search_sql(
+    max_results: int,
+    ra_value: float,
+    dec_value: float,
+    radius_arcmin: float,
+    class_clause: str,
+) -> str:
+    template = Template(
+        textwrap.dedent(
+            """
+            SELECT TOP $max_results
+                s.specObjID AS specobjid,
+                s.ra,
+                s.dec,
+                s.plate,
+                s.mjd,
+                s.fiberID,
+                s.run2d,
+                s.run1d,
+                s.programname,
+                s.survey,
+                s.instrument,
+                s.class,
+                s.z
+            FROM SpecObjAll AS s
+            JOIN dbo.fGetNearbySpecObjEq($ra_value, $dec_value, $radius_arcmin) AS nearby
+                ON nearby.specObjID = s.specObjID
+            WHERE s.sciencePrimary = 1$class_clause
+            ORDER BY nearby.distance
+            """
+        ).strip()
+    )
+    substitutions = {
+        "max_results": max_results,
+        "ra_value": f"{ra_value:.8f}",
+        "dec_value": f"{dec_value:.8f}",
+        "radius_arcmin": f"{radius_arcmin:.6f}",
+        "class_clause": class_clause,
+    }
+    return template.substitute(substitutions)
+
+
+def _iter_products(table: Table) -> Iterable[Product]:
     def _iterator() -> Iterable[Product]:
         for row in table:  # pragma: no branch - simple iteration
             specobjid = _to_int(_raw(row, "specobjid"))

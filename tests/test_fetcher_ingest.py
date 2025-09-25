@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
 
 import numpy as np
 import pytest
 from astropy.io import fits
 
-from server.fetchers.ingest_product import ProductIngestError, ingest_product
+from server.fetchers.ingest_product import ProductIngestError, _merge_metadata, ingest_product
+from server.models import CanonicalSpectrum
 from server.fetchers.models import Product
 
 
@@ -123,3 +126,18 @@ def test_merge_preserves_canonical_fits_metadata() -> None:
     assert spectrum.metadata.ra == pytest.approx(123.45)
     assert spectrum.metadata.dec == pytest.approx(-54.321)
     assert spectrum.metadata.wavelength_standard == "vacuum"
+
+
+def test_merge_metadata_initialises_missing_metadata() -> None:
+    product = _fake_product()
+    canonical = SimpleNamespace(source_hash="placeholder")
+
+    _merge_metadata(cast(CanonicalSpectrum, canonical), product)
+
+    assert hasattr(canonical, "metadata")
+    assert canonical.metadata.provider == "TestArchive"
+    assert canonical.metadata.product_id == "TEST123"
+    assert canonical.metadata.wave_range_nm == (100.0, 200.0)
+    assert canonical.metadata.resolving_power == pytest.approx(1200.0)
+    assert canonical.metadata.urls["download"] == product.urls["download"]
+    assert canonical.metadata.citation == "Example Collaboration"
