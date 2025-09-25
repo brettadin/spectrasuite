@@ -21,6 +21,7 @@ def _fake_product() -> Product:
         pipeline_version="v1.2.3",
         urls={
             "download": "https://example.com/spectrum.fits",
+            "product": "https://example.com/spectrum",
             "portal": "https://example.com/portal",
         },
         citation="Example Collaboration",
@@ -58,3 +59,18 @@ def test_ingest_product_without_download_url() -> None:
         assert "download URL" in str(exc)
     else:  # pragma: no cover - should not happen
         raise AssertionError("Expected ProductIngestError for missing download URL")
+
+
+def test_ingest_product_falls_back_to_product_url() -> None:
+    product = _fake_product()
+    product.urls.pop("download")
+
+    fetched: list[str] = []
+
+    def fake_fetch(url: str) -> bytes:
+        fetched.append(url)
+        return Path("data/examples/example_spectrum.fits").read_bytes()
+
+    ingest_product(product, fetcher=fake_fetch)
+
+    assert fetched == [product.urls["product"]]
