@@ -14,4 +14,10 @@
   wavelength coverage/resolution from the FITS table. Products advertise vacuum wavelengths,
   standard SDSS flux units (`1e-17 erg s^-1 cm^-2 Å^-1`), and include canonical download/portal
   links. Offline coverage patches the SDSS client with synthetic tables/HDU lists.
+- Ingest: `server.fetchers.ingest_product.ingest_product` downloads archive payloads (FITS preferred,
+  ASCII fallback) and runs them through the canonical ingest pipeline. Metadata from the `Product`
+  model is merged into the resulting `TraceMetadata`, provenance logs the fetch step, and duplicates
+  are avoided via the existing session ledger.
+- Star Hub surfaces resolver output alongside MAST search results and SDSS fetch helpers so analysts
+  can add archive spectra directly to the overlay without leaving the app.
 - Tests rely on local fixtures/stubs; network lookups remain optional for integration runs.

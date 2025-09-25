@@ -8,7 +8,8 @@ and exporting manifests that replay the current view. The current build includes
   duplicate detection.
 - Export bundles (manifest v2, per-trace CSVs, optional PNG) with a replay stub that
   reconstructs visible traces.
-- Fe I line overlays with scaling controls plus an offline SIMBAD resolver fixture.
+- Fe I line overlays with scaling controls plus an offline SIMBAD resolver fixture, now paired with
+  MAST and SDSS archive wiring so resolved targets can pull spectra straight into the overlay.
 - Frequency- and energy-based uploads (Hz–PHz, eV/keV/MeV) auto-convert to the wavelength baseline
   during ingest, with provenance capturing the detected axis family.
 - Overlay trace manager surfaces the detected axis family, units, detection method, and downstream
