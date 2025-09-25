@@ -39,24 +39,33 @@ def _filename_from_url(url: str) -> str:
 def _merge_metadata(canonical: CanonicalSpectrum, product: Product) -> None:
     metadata = canonical.metadata
 
-    metadata.provider = product.provider or metadata.provider
-    metadata.product_id = product.product_id or metadata.product_id
-    metadata.title = product.title or metadata.title
-    metadata.target = product.target or metadata.target
-    metadata.ra = product.ra if product.ra is not None else metadata.ra
-    metadata.dec = product.dec if product.dec is not None else metadata.dec
+    if product.provider and metadata.provider in {None, "upload"}:
+        metadata.provider = product.provider
+    if product.product_id:
+        placeholder_ids = {canonical.source_hash}
+        if metadata.product_id is None or metadata.product_id in placeholder_ids:
+            metadata.product_id = product.product_id
+    if product.title and not metadata.title:
+        metadata.title = product.title
+    if product.target and not metadata.target:
+        metadata.target = product.target
+    if metadata.ra is None and product.ra is not None:
+        metadata.ra = product.ra
+    if metadata.dec is None and product.dec is not None:
+        metadata.dec = product.dec
     metadata.wave_range_nm = metadata.wave_range_nm or product.wave_range_nm
     if product.resolution_R is not None and metadata.resolving_power is None:
         metadata.resolving_power = product.resolution_R
     standard = product.wavelength_standard
-    if standard == "none":
-        metadata.wavelength_standard = None
-    elif standard == "air":
-        metadata.wavelength_standard = "air"
-    elif standard == "vacuum":
-        metadata.wavelength_standard = "vacuum"
-    elif standard == "mixed":
-        metadata.wavelength_standard = "unknown"
+    if metadata.wavelength_standard is None and standard is not None:
+        if standard == "none":
+            metadata.wavelength_standard = None
+        elif standard == "air":
+            metadata.wavelength_standard = "air"
+        elif standard == "vacuum":
+            metadata.wavelength_standard = "vacuum"
+        elif standard == "mixed":
+            metadata.wavelength_standard = "unknown"
     if product.flux_units and not metadata.flux_units:
         metadata.flux_units = product.flux_units
     if product.pipeline_version and not metadata.pipeline_version:
