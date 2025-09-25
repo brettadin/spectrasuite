@@ -11,7 +11,7 @@ from server.fetchers.models import Product
 from server.ingest.ascii_loader import ASCIIIngestError, load_ascii_spectrum
 from server.ingest.canonicalize import canonicalize_ascii, canonicalize_fits
 from server.ingest.fits_loader import FITSIngestError, load_fits_spectrum
-from server.models import CanonicalSpectrum, ProvenanceEvent
+from server.models import CanonicalSpectrum, ProvenanceEvent, TraceMetadata
 
 
 class ProductIngestError(RuntimeError):
@@ -37,23 +37,57 @@ def _filename_from_url(url: str) -> str:
 
 
 def _merge_metadata(canonical: CanonicalSpectrum, product: Product) -> None:
-    metadata = canonical.metadata
+    metadata = _ensure_metadata(canonical)
+    _merge_provider(metadata, product)
+    _merge_identifiers(metadata, canonical, product)
+    _merge_target_and_pointing(metadata, product)
+    _merge_spectral_characteristics(metadata, product)
+    _merge_units_and_pipeline(metadata, product)
+    _merge_references(metadata, product)
 
+
+def _ensure_metadata(canonical: CanonicalSpectrum) -> TraceMetadata:
+    metadata = getattr(canonical, "metadata", None)
+    if isinstance(metadata, TraceMetadata):
+        return metadata
+
+    new_metadata = TraceMetadata()
+    try:
+        canonical.metadata = new_metadata  # type: ignore[attr-defined]
+    except AttributeError:  # pragma: no cover - fallback for exotic objects
+        object.__setattr__(canonical, "metadata", new_metadata)
+    return new_metadata
+
+
+def _merge_provider(metadata: TraceMetadata, product: Product) -> None:
     if product.provider and metadata.provider in {None, "upload"}:
         metadata.provider = product.provider
+
+
+def _merge_identifiers(
+    metadata: TraceMetadata, canonical: CanonicalSpectrum, product: Product
+) -> None:
     if product.product_id:
-        placeholder_ids = {canonical.source_hash}
+        source_hash = getattr(canonical, "source_hash", None)
+        placeholder_ids = {source_hash} if source_hash else set()
         if metadata.product_id is None or metadata.product_id in placeholder_ids:
             metadata.product_id = product.product_id
     if product.title and not metadata.title:
         metadata.title = product.title
+
+
+def _merge_target_and_pointing(metadata: TraceMetadata, product: Product) -> None:
     if product.target and not metadata.target:
         metadata.target = product.target
     if metadata.ra is None and product.ra is not None:
         metadata.ra = product.ra
     if metadata.dec is None and product.dec is not None:
         metadata.dec = product.dec
-    metadata.wave_range_nm = metadata.wave_range_nm or product.wave_range_nm
+
+
+def _merge_spectral_characteristics(metadata: TraceMetadata, product: Product) -> None:
+    if metadata.wave_range_nm is None and product.wave_range_nm is not None:
+        metadata.wave_range_nm = product.wave_range_nm
     if product.resolution_R is not None and metadata.resolving_power is None:
         metadata.resolving_power = product.resolution_R
     standard = product.wavelength_standard
@@ -66,10 +100,16 @@ def _merge_metadata(canonical: CanonicalSpectrum, product: Product) -> None:
             metadata.wavelength_standard = "vacuum"
         elif standard == "mixed":
             metadata.wavelength_standard = "unknown"
+
+
+def _merge_units_and_pipeline(metadata: TraceMetadata, product: Product) -> None:
     if product.flux_units and not metadata.flux_units:
         metadata.flux_units = product.flux_units
     if product.pipeline_version and not metadata.pipeline_version:
         metadata.pipeline_version = product.pipeline_version
+
+
+def _merge_references(metadata: TraceMetadata, product: Product) -> None:
     metadata.urls.update(product.urls)
     metadata.citation = product.citation or metadata.citation
     metadata.doi = product.doi or metadata.doi
