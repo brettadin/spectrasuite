@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from contextlib import suppress
+import textwrap
 from typing import Any
 
 import numpy as np
@@ -161,6 +162,112 @@ def _query_specobj(**kwargs: Any) -> Table:
     return table
 
 
+def _normalise_class_filter(
+    value: str | Iterable[str] | None,
+) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        candidates = [value]
+    else:
+        candidates = list(value)
+    normalised: list[str] = []
+    for item in candidates:
+        if item is None:
+            continue
+        text = str(item).strip()
+        if not text:
+            continue
+        normalised.append(text.replace("'", "''"))
+    return normalised
+
+
+def search_spectra(
+    *,
+    ra: float,
+    dec: float,
+    radius_arcsec: float = 30.0,
+    limit: int = 10,
+    class_: str | Iterable[str] | None = None,
+    class_filter: str | Iterable[str] | None = None,
+) -> Iterable[Product]:
+    """Search for SDSS spectra near coordinates.
+
+    Parameters mirror the earlier implementation while routing any class filter
+    through the keyword accepted by astroquery (``class`` via SQL).
+    """
+
+    if SDSS is None:
+        raise RuntimeError("astroquery.sdss is not available")
+    radius = float(radius_arcsec)
+    if radius <= 0:
+        return []
+    max_results = int(limit)
+    if max_results <= 0:
+        return []
+    try:
+        ra_value = float(ra)
+        dec_value = float(dec)
+    except (TypeError, ValueError) as exc:  # pragma: no cover - defensive guard
+        raise ValueError("RA and Dec must be finite floats") from exc
+
+    filter_values = _normalise_class_filter(class_)
+    if not filter_values:
+        filter_values = _normalise_class_filter(class_filter)
+
+    radius_arcmin = radius / 60.0
+    # SDSS cone searches cap the radius at ~3 arcmin; avoid exceeding the
+    # server-side constraint to keep queries predictable.
+    if radius_arcmin > 3.0:
+        radius_arcmin = 3.0
+
+    class_clause = ""
+    if filter_values:
+        joined = ", ".join(f"'{item}'" for item in filter_values)
+        class_clause = f" AND s.class IN ({joined})"
+
+    sql = textwrap.dedent(
+        f"""
+        SELECT TOP {max_results}
+            s.specObjID AS specobjid,
+            s.ra,
+            s.dec,
+            s.plate,
+            s.mjd,
+            s.fiberID,
+            s.run2d,
+            s.run1d,
+            s.programname,
+            s.survey,
+            s.instrument,
+            s.class,
+            s.z
+        FROM SpecObjAll AS s
+        JOIN dbo.fGetNearbySpecObjEq({ra_value:.8f}, {dec_value:.8f}, {radius_arcmin:.6f}) AS nearby
+            ON nearby.specObjID = s.specObjID
+        WHERE s.sciencePrimary = 1{class_clause}
+        ORDER BY nearby.distance
+        """
+    ).strip()
+
+    table = SDSS.query_sql(sql)
+    if table is None or len(table) == 0:
+        return []
+
+    def _iterator() -> Iterable[Product]:
+        for row in table:  # pragma: no branch - simple iteration
+            specobjid = _to_int(_raw(row, "specobjid"))
+            if specobjid is None:
+                continue
+            try:
+                hdul = _load_spectrum(specobjid=specobjid)
+            except LookupError:
+                continue
+            yield _build_product(row, hdul=hdul)
+
+    return _iterator()
+
+
 def _build_product(row: Any, *, hdul: fits.HDUList) -> Product:
     specobjid = _to_str(_raw(row, "specobjid"))
     if specobjid is None:
@@ -244,4 +351,4 @@ def fetch_by_plate(plate: int, mjd: int, fiber: int) -> Product:
     return _build_product(row, hdul=hdul)
 
 
-__all__ = ["fetch_by_specobjid", "fetch_by_plate"]
+__all__ = ["search_spectra", "fetch_by_specobjid", "fetch_by_plate"]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 import streamlit as st
 
@@ -17,6 +18,7 @@ class _StarHubState:
     resolver: ResolverResult | None = None
     mast_products: list[Product] = field(default_factory=list)
     sdss_products: list[Product] = field(default_factory=list)
+    sdss_search_results: list[Product] = field(default_factory=list)
 
 
 _STATE_KEY = "star_hub_state"
@@ -184,11 +186,73 @@ def _sdss_plate_controls(state: _StarHubState) -> None:
     _store_sdss_product(state, product)
 
 
+def _render_sdss_search_section(session: AppSessionState, state: _StarHubState) -> None:
+    st.markdown("#### Search SDSS by resolved position")
+    resolver = state.resolver
+    if resolver is None or resolver.ra is None or resolver.dec is None:
+        st.info("Resolve a target with coordinates to search nearby SDSS spectra.")
+        return
+
+    radius = st.slider(
+        "Search radius (arcsec)",
+        min_value=1.0,
+        max_value=180.0,
+        value=30.0,
+        step=1.0,
+        key="star_hub_sdss_radius",
+    )
+    class_options = ["(any)", "STAR", "GALAXY", "QSO"]
+    selected_class = st.selectbox(
+        "Spectral class",
+        options=class_options,
+        index=0,
+        key="star_hub_sdss_class",
+        help="Filter SDSS results by the archive classification when available.",
+    )
+    limit = st.slider(
+        "Result limit",
+        min_value=1,
+        max_value=20,
+        value=5,
+        step=1,
+        key="star_hub_sdss_limit",
+    )
+
+    if st.button("Search SDSS region", key="star_hub_sdss_search"):
+        filter_kwargs: dict[str, Any] = {}
+        if selected_class != "(any)":
+            filter_kwargs["class_"] = selected_class
+        with st.spinner("Querying SDSS..."):
+            try:
+                products = list(
+                    sdss.search_spectra(
+                        ra=resolver.ra,
+                        dec=resolver.dec,
+                        radius_arcsec=radius,
+                        limit=limit,
+                        **filter_kwargs,
+                    )
+                )
+            except Exception as exc:  # pragma: no cover - network path
+                st.error(str(exc))
+            else:
+                state.sdss_search_results = products
+                if not products:
+                    st.info("No SDSS spectra found for the selected parameters.")
+
+    if state.sdss_search_results:
+        st.write(f"Found {len(state.sdss_search_results)} SDSS spectrum(s).")
+        for index, product in enumerate(state.sdss_search_results):
+            _render_product_card(session, product, key_prefix=f"sdss_search_{index}")
+
+
 def _render_sdss_section(session: AppSessionState, state: _StarHubState) -> None:
     st.markdown("### SDSS archive")
     _sdss_specobj_controls(state)
     st.caption("Or fetch by plate / MJD / fiber identifiers")
     _sdss_plate_controls(state)
+
+    _render_sdss_search_section(session, state)
 
     if state.sdss_products:
         st.write(f"Stored {len(state.sdss_products)} SDSS spectrum(s).")
