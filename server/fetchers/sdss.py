@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import textwrap
 from collections.abc import Iterable
 from contextlib import suppress
-import textwrap
 from typing import Any
 
 import numpy as np
@@ -182,6 +182,76 @@ def _normalise_class_filter(
     return normalised
 
 
+def _normalise_coordinates(ra: float, dec: float) -> tuple[float, float]:
+    try:
+        return float(ra), float(dec)
+    except (TypeError, ValueError) as exc:  # pragma: no cover - defensive guard
+        raise ValueError("RA and Dec must be finite floats") from exc
+
+
+def _normalise_radius(radius_arcsec: float) -> float:
+    radius = float(radius_arcsec)
+    if radius <= 0:
+        return 0.0
+    radius_arcmin = radius / 60.0
+    return min(radius_arcmin, 3.0)
+
+
+def _normalise_limit(limit: int) -> int:
+    max_results = int(limit)
+    return max_results if max_results > 0 else 0
+
+
+def _build_class_clause(values: Iterable[str]) -> str:
+    items = list(values)
+    if not items:
+        return ""
+    joined = ", ".join(f"'{item}'" for item in items)
+    return f" AND s.class IN ({joined})"
+
+
+def _build_sql_query(
+    *,
+    max_results: int,
+    ra: float,
+    dec: float,
+    radius_arcmin: float,
+    class_clause: str,
+) -> str:
+    template = textwrap.dedent(
+        """
+        SELECT TOP {max_results}
+            s.specObjID AS specobjid,
+            s.ra,
+            s.dec,
+            s.plate,
+            s.mjd,
+            s.fiberID,
+            s.run2d,
+            s.run1d,
+            s.programname,
+            s.survey,
+            s.instrument,
+            s.class,
+            s.z
+        FROM SpecObjAll AS s
+        JOIN dbo.fGetNearbySpecObjEq({ra:.8f}, {dec:.8f}, {radius_arcmin:.6f}) AS nearby
+            ON nearby.specObjID = s.specObjID
+        WHERE s.sciencePrimary = 1{class_clause}
+        ORDER BY nearby.distance
+        """
+    ).strip()
+    return template.format_map(
+        {
+            "max_results": max_results,
+            "ra": ra,
+            "dec": dec,
+            "radius_arcmin": radius_arcmin,
+            "class_clause": class_clause,
+        }
+    )
+
+
 def search_spectra(
     *,
     ra: float,
@@ -199,56 +269,26 @@ def search_spectra(
 
     if SDSS is None:
         raise RuntimeError("astroquery.sdss is not available")
-    radius = float(radius_arcsec)
-    if radius <= 0:
+    radius_arcmin = _normalise_radius(radius_arcsec)
+    if radius_arcmin <= 0:
         return []
-    max_results = int(limit)
-    if max_results <= 0:
+    max_results = _normalise_limit(limit)
+    if max_results == 0:
         return []
-    try:
-        ra_value = float(ra)
-        dec_value = float(dec)
-    except (TypeError, ValueError) as exc:  # pragma: no cover - defensive guard
-        raise ValueError("RA and Dec must be finite floats") from exc
+    ra_value, dec_value = _normalise_coordinates(ra, dec)
 
     filter_values = _normalise_class_filter(class_)
     if not filter_values:
         filter_values = _normalise_class_filter(class_filter)
 
-    radius_arcmin = radius / 60.0
-    # SDSS cone searches cap the radius at ~3 arcmin; avoid exceeding the
-    # server-side constraint to keep queries predictable.
-    if radius_arcmin > 3.0:
-        radius_arcmin = 3.0
-
-    class_clause = ""
-    if filter_values:
-        joined = ", ".join(f"'{item}'" for item in filter_values)
-        class_clause = f" AND s.class IN ({joined})"
-
-    sql = textwrap.dedent(
-        f"""
-        SELECT TOP {max_results}
-            s.specObjID AS specobjid,
-            s.ra,
-            s.dec,
-            s.plate,
-            s.mjd,
-            s.fiberID,
-            s.run2d,
-            s.run1d,
-            s.programname,
-            s.survey,
-            s.instrument,
-            s.class,
-            s.z
-        FROM SpecObjAll AS s
-        JOIN dbo.fGetNearbySpecObjEq({ra_value:.8f}, {dec_value:.8f}, {radius_arcmin:.6f}) AS nearby
-            ON nearby.specObjID = s.specObjID
-        WHERE s.sciencePrimary = 1{class_clause}
-        ORDER BY nearby.distance
-        """
-    ).strip()
+    class_clause = _build_class_clause(filter_values)
+    sql = _build_sql_query(
+        max_results=max_results,
+        ra=ra_value,
+        dec=dec_value,
+        radius_arcmin=radius_arcmin,
+        class_clause=class_clause,
+    )
 
     table = SDSS.query_sql(sql)
     if table is None or len(table) == 0:
