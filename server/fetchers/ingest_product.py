@@ -6,6 +6,7 @@ import io
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
+from typing import TypeVar
 
 from server.fetchers.models import Product
 from server.ingest.ascii_loader import ASCIIIngestError, load_ascii_spectrum
@@ -36,31 +37,70 @@ def _filename_from_url(url: str) -> str:
     return candidate or "archive_product"
 
 
+_PLACEHOLDER_PROVIDERS = {None, "upload"}
+_T = TypeVar("_T")
+
+
+def _preferred_provider(current: str | None, candidate: str | None) -> str | None:
+    if candidate and current in _PLACEHOLDER_PROVIDERS:
+        return candidate
+    return current
+
+
+def _preferred_product_id(
+    current: str | None, candidate: str | None, *, placeholder_ids: set[str]
+) -> str | None:
+    if candidate and (current is None or current in placeholder_ids):
+        return candidate
+    return current
+
+
+def _value_if_missing(current: _T | None, candidate: _T | None) -> _T | None:
+    if current is not None:
+        return current
+    return candidate
+
+
+_STANDARD_MAPPING = {
+    "air": "air",
+    "vacuum": "vacuum",
+    "mixed": "unknown",
+    "none": None,
+}
+
+
+def _preferred_wavelength_standard(
+    current: str | None, candidate: str | None
+) -> str | None:
+    if current is not None:
+        return current
+    if candidate is None:
+        return current
+    return _STANDARD_MAPPING.get(candidate, current)
+
+
 def _merge_metadata(canonical: CanonicalSpectrum, product: Product) -> None:
     metadata = canonical.metadata
 
-    metadata.provider = product.provider or metadata.provider
-    metadata.product_id = product.product_id or metadata.product_id
-    metadata.title = product.title or metadata.title
-    metadata.target = product.target or metadata.target
-    metadata.ra = product.ra if product.ra is not None else metadata.ra
-    metadata.dec = product.dec if product.dec is not None else metadata.dec
+    metadata.provider = _preferred_provider(metadata.provider, product.provider)
+    metadata.product_id = _preferred_product_id(
+        metadata.product_id,
+        product.product_id,
+        placeholder_ids={canonical.source_hash},
+    )
+    metadata.title = metadata.title or product.title
+    metadata.target = metadata.target or product.target
+    metadata.ra = _value_if_missing(metadata.ra, product.ra)
+    metadata.dec = _value_if_missing(metadata.dec, product.dec)
     metadata.wave_range_nm = metadata.wave_range_nm or product.wave_range_nm
-    if product.resolution_R is not None and metadata.resolving_power is None:
-        metadata.resolving_power = product.resolution_R
-    standard = product.wavelength_standard
-    if standard == "none":
-        metadata.wavelength_standard = None
-    elif standard == "air":
-        metadata.wavelength_standard = "air"
-    elif standard == "vacuum":
-        metadata.wavelength_standard = "vacuum"
-    elif standard == "mixed":
-        metadata.wavelength_standard = "unknown"
-    if product.flux_units and not metadata.flux_units:
-        metadata.flux_units = product.flux_units
-    if product.pipeline_version and not metadata.pipeline_version:
-        metadata.pipeline_version = product.pipeline_version
+    if metadata.resolving_power is None:
+        metadata.resolving_power = product.resolution_R or metadata.resolving_power
+    metadata.wavelength_standard = _preferred_wavelength_standard(
+        metadata.wavelength_standard,
+        product.wavelength_standard,
+    )
+    metadata.flux_units = metadata.flux_units or product.flux_units
+    metadata.pipeline_version = metadata.pipeline_version or product.pipeline_version
     metadata.urls.update(product.urls)
     metadata.citation = product.citation or metadata.citation
     metadata.doi = product.doi or metadata.doi

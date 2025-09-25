@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
+
+import numpy as np
+import pytest
+from astropy.io import fits
 
 from server.fetchers.ingest_product import ProductIngestError, ingest_product
 from server.fetchers.models import Product
@@ -28,6 +33,25 @@ def _fake_product() -> Product:
         doi="10.1234/example",
         extra={"program": "demo"},
     )
+
+
+def _fits_bytes_with_metadata() -> bytes:
+    wavelengths = np.linspace(4000.0, 4004.0, 5)
+    flux = np.linspace(1.0, 5.0, 5)
+    columns = [
+        fits.Column(name="WAVELENGTH", array=wavelengths, format="D", unit="angstrom"),
+        fits.Column(name="FLUX", array=flux, format="D", unit="erg/s/cm2/A"),
+    ]
+    table_hdu = fits.BinTableHDU.from_columns(columns, name="SPECTRUM")
+    header = table_hdu.header
+    header["OBJECT"] = "FITS Target"
+    header["RA"] = 123.45
+    header["DEC"] = -54.321
+    header["SPECSYS"] = "BARYCENT"
+    header["BUNIT"] = "erg/s/cm2/A"
+    buffer = io.BytesIO()
+    fits.HDUList([fits.PrimaryHDU(), table_hdu]).writeto(buffer)
+    return buffer.getvalue()
 
 
 def test_ingest_product_updates_metadata() -> None:
@@ -74,3 +98,28 @@ def test_ingest_product_falls_back_to_product_url() -> None:
     ingest_product(product, fetcher=fake_fetch)
 
     assert fetched == [product.urls["product"]]
+
+
+def test_merge_preserves_canonical_fits_metadata() -> None:
+    product = _fake_product()
+    product.provider = "ArchiveX"
+    product.product_id = "ARCHIVEID"
+    product.target = "Archive Target"
+    product.ra = 1.23
+    product.dec = 4.56
+    product.wavelength_standard = "unknown"
+
+    fits_payload = _fits_bytes_with_metadata()
+
+    def fake_fetch(url: str) -> bytes:
+        assert url == product.urls["download"]
+        return fits_payload
+
+    spectrum = ingest_product(product, fetcher=fake_fetch)
+
+    assert spectrum.metadata.provider == "ArchiveX"
+    assert spectrum.metadata.product_id == "ARCHIVEID"
+    assert spectrum.metadata.target == "FITS Target"
+    assert spectrum.metadata.ra == pytest.approx(123.45)
+    assert spectrum.metadata.dec == pytest.approx(-54.321)
+    assert spectrum.metadata.wavelength_standard == "vacuum"
