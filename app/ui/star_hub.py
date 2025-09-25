@@ -70,10 +70,20 @@ def _render_product_card(session: AppSessionState, product: Product, *, key_pref
                 st.markdown(
                     f"[Portal link]({product.urls['portal']})", help="Open the archive summary"
                 )
-            if product.urls.get("download"):
+            download_url = product.urls.get("download")
+            product_url = product.urls.get("product")
+            if download_url:
                 st.markdown(
-                    f"[Download link]({product.urls['download']})",
+                    f"[Download link]({download_url})",
                     help="Direct archive download",
+                )
+            elif product_url:
+                st.markdown(
+                    f"[Archive product page (may require archive landing page)]({product_url})",
+                    help=(
+                        "Opens the archive product page; it may redirect to a "
+                        "landing page before the download starts."
+                    ),
                 )
         with cols[1]:
             if st.button("Add to overlay", key=f"{key_prefix}_add"):
