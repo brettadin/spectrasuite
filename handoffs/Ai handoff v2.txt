@@ -1,0 +1,139 @@
+# Spectra App — Master Handoff Prompt (use at the start of every chat)
+
+You are the next AI developer on the **Spectra App** project. Your job is to **build forward without breaking anything**. Follow these rules exactly.
+
+## 0) What to read first (in this repo)
+
+1. `handoffs/` (latest HANDOFF_*.md) = snapshot of last run + priorities.
+2. `PATCH_NOTES/` (latest patch) = user-facing change log + known issues.
+3. `brains/` (latest versioned note) = lessons learned, gotchas, design intent.
+4. `atlas/` (ui_contract.md, architecture.md, data_model.md, fetchers_overview.md, transforms.md) = system contracts you must not violate.
+5. `README.md` = quick setup/commands.
+6. `docs/static/` = content shown in the in-app Docs tab.
+7. any other relevant data from documents such that you continue progressing this project
+
+## 1) Mission (do not drift)
+
+Build a research-grade Streamlit app to **ingest**, **fetch**, **compare**, **analyze**, and **export** spectra across UV/Vis/IR with full **provenance** and **reproducibility**.
+
+Non-negotiables:
+
+* Canonical x-axis: **vacuum nanometers** (recompute others idempotently; never chain conversions).
+* Physics honesty: explicit **air↔vac** method tags; resolution matching when appropriate; numerically safe differentials (A−B, A/B with ε).
+* Provenance everywhere: every transform stamped; exports must exactly replay the visible state.
+* UI contract: sidebar order, tabs, version badge, trace manager with **axis family + transform notes** must remain present.
+
+## 2) Current scope (always confirm in handoffs/patch notes)
+
+* Tabs: **Overlay**, **Differential**, **Star Hub**, **Docs** (keep their controls intact).
+* Ingest: ASCII and FITS with header sniffing, unit detection, frequency/energy→wavelength normalization, dedupe ledger.
+* Star Hub: SIMBAD + (MAST/SDSS) product metadata; wire products into Overlay when specified by latest handoff.
+
+## 3) Your deliverables for **this** patch
+
+* Implement the items listed under **“Next Steps / Known Issues”** in the most recent:
+  a) `handoffs/HANDOFF_*.md` → prioritized tasks
+  b) `PATCH_NOTES/PATCH_NOTES_*.md` → bugs to fix, UX polish
+  c) `brains/*` → guardrails/”don’t break this again” notes
+* Keep the UI contract; do not remove required controls. If you add UI, **merge** it into the existing layout.
+* Update **all continuity artifacts** when you change behavior: `PATCH_NOTES`, `brains`, `atlas` (if contracts change), and `handoffs`.
+
+## 4) One-click setup & launch (ensure these work)
+
+Provide/maintain both scripts; they must **create venv, install, and run**:
+
+**Windows (PowerShell):** `RUN_CMDS/Quick-Launch.ps1`
+
+```powershell
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+$here = Split-Path -Parent $MyInvocation.MyCommand.Path
+cd $here\..
+if (!(Test-Path .venv)) { py -3.11 -m venv .venv }
+. .\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -e .[dev]
+$env:PYTHONPATH="."
+streamlit run app/app_patched.py
+```
+
+**macOS/Linux:** `RUN_CMDS/quick-launch.sh`
+
+```bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+python3.11 -m venv .venv || python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -e .[dev]
+export PYTHONPATH=.
+streamlit run app/app_patched.py
+```
+
+Also keep a **Clean Launch** (no cached state), e.g. `RUN_CMDS/clean-launch.*` that purges `.streamlit/`, `__pycache__/`, and any temp caches the app uses before running.
+
+## 5) Quality gates (run all locally & in CI)
+
+```
+ruff check .
+black --check .
+mypy .
+PYTHONPATH=. pytest -q
+python tools/verifiers/Verify-Atlas.py
+python tools/verifiers/Verify-PatchNotes.py
+python tools/verifiers/Verify-Brains.py
+python tools/verifiers/Verify-Handoff.py
+PYTHONPATH=. python tools/verifiers/Verify-UI-Contract.py
+```
+
+If any fail, **fix code or docs**—don’t silence checks.
+
+## 6) UI/UX rules (do not regress)
+
+* Keep **version badge**, **Examples/Display Mode/Units/Duplicate Scope/Line Overlays** in the sidebar (order per `atlas/ui_contract.md`).
+* Overlay trace manager must show **axis family** and **transform notes** per-trace.
+* Differential tab: independent A/B selectors, swap/lock behavior preserved; suppress trivial zeros unless “add anyway.”
+* Legend hygiene: no duplicate/empty labels; truncate with tooltip if needed.
+* Performance: enable downsampling/decimation for huge traces (plot what’s needed, export full fidelity).
+* Dedupe ledger behavior consistent between filename and plotted label; provide an “ingest anyway” override.
+
+## 7) Fetchers & citations
+
+* When wiring **MAST**/**SDSS**/**SIMBAD** products into Star Hub or Overlay, capture **coverage, units, provenance, and citation/DOI** into metadata and exports.
+* Follow the links in the uploaded “links” docs (MAST APIs/portal, SIMBAD, SDSS) for authoritative behaviors and required attributions (see handoff links files).   
+
+## 8) Versioning & provenance
+
+* Bump `pyproject.toml` version (dev tag ok) and `app/config/version.json`.
+* Every transform must emit a `ProvenanceEvent`. Verify the Overlay shows the new notes correctly.
+* Exports: ensure “Export what I see” reproduces the current view (manifest + per-trace CSV + optional PNG).
+
+## 9) Pull-request hygiene (no footguns)
+
+* **Never** leave merge conflict markers in code:
+
+  ```
+  <<<<<<< HEAD
+  =======
+  >>>>>>>
+  ```
+
+  If you see them, **stop** and resolve before committing.
+* No stray prints/debug text. Keep type hints. Format and lint clean.
+* Update `PATCH_NOTES`, `brains`, `handoffs` with the exact changes you made and why.
+
+## 10) What to do when something breaks
+
+* Prefer **small, reversible** patches.
+* If a contract must change, update `atlas/*`, add a verifier or test, and call it out in `PATCH_NOTES` + `handoffs`.
+* If network/archives are flaky, keep **offline stubs/tests** so CI stays green.
+
+## 11) End-of-run checklist (must deliver)
+
+* ✅ Code passes **ruff/black/mypy/pytest** and all **verifiers**.
+* ✅ UI contract preserved; quick-launch and clean-launch scripts tested on your OS.
+* ✅ `PATCH_NOTES`, `brains`, `atlas` (if needed), and `handoffs` updated for this patch.
+* ✅ Version bumped; export replay verified; provenance notes visible in Overlay.
+* ✅ No conflict markers; no dead/commented-out blocks left behind.
+
+
