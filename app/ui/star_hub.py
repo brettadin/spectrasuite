@@ -214,16 +214,46 @@ def render_star_hub_tab(session: AppSessionState) -> None:
 
     if state.resolver:
         resolver = state.resolver
-        st.json(
-            {
-                "name": resolver.canonical_name,
-                "ra_deg": resolver.ra,
-                "dec_deg": resolver.dec,
-                "object_type": resolver.object_type,
-                "aliases": resolver.aliases,
-                "provenance": resolver.provenance,
-            }
+        st.markdown("#### Resolved target")
+        alias_preview = "—"
+        if resolver.aliases:
+            preview = ", ".join(resolver.aliases[:3])
+            remaining = len(resolver.aliases) - 3
+            if remaining > 0:
+                preview += f" (+{remaining} more)"
+            alias_preview = preview
+
+        summary_rows = [
+            ("Name", resolver.canonical_name or "—"),
+            ("Object type", resolver.object_type or "—"),
+            (
+                "RA (deg)",
+                f"{resolver.ra:.5f}" if resolver.ra is not None else "—",
+            ),
+            (
+                "Dec (deg)",
+                f"{resolver.dec:.5f}" if resolver.dec is not None else "—",
+            ),
+            ("Aliases", alias_preview),
+        ]
+
+        table_lines = ["| Field | Value |", "| --- | --- |"]
+        table_lines.extend(
+            f"| {field} | {str(value).replace('|', '\\|')} |" for field, value in summary_rows
         )
+        st.markdown("\n".join(table_lines))
+
+        with st.expander("Show full resolver metadata"):
+            st.json(
+                {
+                    "name": resolver.canonical_name,
+                    "ra_deg": resolver.ra,
+                    "dec_deg": resolver.dec,
+                    "object_type": resolver.object_type,
+                    "aliases": resolver.aliases,
+                    "provenance": resolver.provenance,
+                }
+            )
         _render_mast_section(session, state)
     else:
         st.info("Use the resolver above to seed archive searches.")
