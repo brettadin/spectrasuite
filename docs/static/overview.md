@@ -11,8 +11,9 @@ and exporting manifests that replay the current view. The current build includes
 - Fe I line overlays with scaling controls plus an offline SIMBAD resolver fixture.
 - Frequency- and energy-based uploads (Hz–PHz, eV/keV/MeV) auto-convert to the wavelength baseline
   during ingest, with provenance capturing the detected axis family.
-- Overlay trace manager surfaces the detected axis family, units, and detection method for each trace to
-  speed up debugging of messy uploads.
+- Overlay trace manager surfaces the detected axis family, units, detection method, and downstream
+  transforms (unit conversions, air↔vacuum shifts, differential operations) to speed up debugging of
+  messy uploads and derived products.
 
 Upcoming documentation work will expand this section with end-to-end usage guidance, data-source
 citation details, legal notices, and troubleshooting tips.

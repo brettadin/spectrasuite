@@ -16,7 +16,7 @@ from server.ingest.ascii_loader import ASCIIIngestError, load_ascii_spectrum
 from server.ingest.canonicalize import canonicalize_ascii, canonicalize_fits
 from server.ingest.fits_loader import FITSIngestError, load_fits_spectrum
 from server.math import transforms
-from server.models import CanonicalSpectrum
+from server.models import CanonicalSpectrum, ProvenanceEvent
 from server.overlays.lines import LineCatalog, apply_velocity_shift, scale_lines
 
 
@@ -42,6 +42,53 @@ class AxisSummary:
     wave_unit: str | None = None
     wave_column: str | None = None
     headerless: bool = False
+
+
+def _format_epsilon(value: object) -> str | None:
+    if isinstance(value, int | float):
+        return f"{value:g}"
+    return None
+
+
+def _note_from_event(event: ProvenanceEvent) -> str | None:
+    params = dict(event.parameters)
+    step = event.step
+    if step == "convert_wavelength_unit":
+        source = str(params.get("from", "unknown"))
+        target = str(params.get("to", "nm"))
+        return f"Axis converted {source}→{target}"
+    if step == "air_to_vacuum":
+        method = params.get("method")
+        return f"Air→vacuum via {method}" if method else "Air→vacuum conversion"
+    if step == "differential_subtract":
+        other = params.get("other")
+        label = f"Differential subtract vs {other}" if other else "Differential subtract"
+        epsilon = _format_epsilon(params.get("epsilon"))
+        return f"{label} (ε={epsilon})" if epsilon else label
+    if step == "differential_divide":
+        other = params.get("other")
+        label = f"Differential divide vs {other}" if other else "Differential divide"
+        epsilon = _format_epsilon(params.get("epsilon"))
+        return f"{label} (ε={epsilon})" if epsilon else label
+    if step == "differential_ui_add":
+        operation = params.get("operation")
+        if isinstance(operation, str) and operation:
+            return f"Added via differential tab ({operation})"
+        return "Added via differential tab"
+    if step == "differential_trivial":
+        return "Trivial differential trace"
+    return None
+
+
+def _collect_transform_notes(trace: CanonicalSpectrum) -> list[str]:
+    """Describe downstream provenance transforms for a trace."""
+
+    notes: list[str] = []
+    for event in trace.provenance:
+        note = _note_from_event(event)
+        if note:
+            notes.append(note)
+    return notes
 
 
 def _extract_axis_summary(trace: CanonicalSpectrum) -> AxisSummary | None:
@@ -142,6 +189,9 @@ def _render_trace_controls(session: AppSessionState) -> None:
         summary = _extract_axis_summary(trace)
         if summary:
             st.caption(_format_axis_caption(summary))
+        transform_notes = _collect_transform_notes(trace)
+        if transform_notes:
+            st.caption("Transforms: " + "; ".join(transform_notes))
 
 
 def _plot_traces(session: AppSessionState, axis_unit: XAxisUnit) -> go.Figure:
