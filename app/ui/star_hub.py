@@ -17,9 +17,33 @@ class _StarHubState:
     resolver: ResolverResult | None = None
     mast_products: list[Product] = field(default_factory=list)
     sdss_products: list[Product] = field(default_factory=list)
+    sdss_search_results: list[Product] = field(default_factory=list)
 
 
 _STATE_KEY = "star_hub_state"
+
+
+_SDSS_SURVEY_OPTIONS: list[tuple[str, str | None]] = [
+    ("Any survey", None),
+    ("Legacy (SDSS)", "sdss"),
+    ("BOSS", "boss"),
+    ("APOGEE-1", "apogee1"),
+    ("APOGEE-2", "apogee2"),
+]
+
+_SDSS_INSTRUMENT_OPTIONS: list[tuple[str, str | None]] = [
+    ("Any instrument", None),
+    ("SDSS optical", "SDSS"),
+    ("BOSS optical", "BOSS"),
+    ("APOGEE (near-IR)", "APOGEE"),
+]
+
+_SDSS_CLASS_OPTIONS: list[tuple[str, str | None]] = [
+    ("Any object class", None),
+    ("Stellar (STAR)", "STAR"),
+    ("Galaxy (GALAXY)", "GALAXY"),
+    ("Quasar (QSO)", "QSO"),
+]
 
 
 def _get_state() -> _StarHubState:
@@ -36,6 +60,13 @@ def _format_wave_range(wave_range: tuple[float, float] | None) -> str:
         return "—"
     start, end = wave_range
     return f"{start:.1f}–{end:.1f} nm"
+
+
+def _parse_optional_float(value: str) -> float | None:
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    return float(cleaned)
 
 
 def _render_product_card(session: AppSessionState, product: Product, *, key_prefix: str) -> None:
@@ -174,11 +205,141 @@ def _sdss_plate_controls(state: _StarHubState) -> None:
     _store_sdss_product(state, product)
 
 
+def _render_sdss_filters(state: _StarHubState) -> None:
+    st.caption("Search SDSS by survey, telescope, and class filters")
+
+    survey_labels = [label for label, _ in _SDSS_SURVEY_OPTIONS]
+    instrument_labels = [label for label, _ in _SDSS_INSTRUMENT_OPTIONS]
+    class_labels = [label for label, _ in _SDSS_CLASS_OPTIONS]
+
+    survey_choice = st.selectbox(
+        "Survey",
+        options=survey_labels,
+        index=0,
+        key="star_hub_sdss_survey",
+        help="Restrict results to a specific SDSS survey",
+    )
+    instrument_choice = st.selectbox(
+        "Instrument",
+        options=instrument_labels,
+        index=0,
+        key="star_hub_sdss_instrument",
+        help="Limit by spectrograph",
+    )
+    class_choice = st.selectbox(
+        "Object class",
+        options=class_labels,
+        index=1,
+        key="star_hub_sdss_class",
+        help="Prioritize stellar targets or broaden the search",
+    )
+
+    wave_cols = st.columns(2)
+    wave_min_input = wave_cols[0].text_input(
+        "Min wavelength (nm)",
+        key="star_hub_sdss_wave_min",
+        placeholder="Optional",
+        help="Lower wavelength bound for the metadata query",
+    )
+    wave_max_input = wave_cols[1].text_input(
+        "Max wavelength (nm)",
+        key="star_hub_sdss_wave_max",
+        placeholder="Optional",
+        help="Upper wavelength bound for the metadata query",
+    )
+
+    if not st.button("Search SDSS metadata", key="star_hub_sdss_search"):
+        return
+
+    try:
+        wave_min = _parse_optional_float(wave_min_input)
+    except ValueError:
+        st.error("Minimum wavelength must be numeric if provided")
+        return
+    try:
+        wave_max = _parse_optional_float(wave_max_input)
+    except ValueError:
+        st.error("Maximum wavelength must be numeric if provided")
+        return
+
+    survey_value = dict(_SDSS_SURVEY_OPTIONS)[survey_choice]
+    instrument_value = dict(_SDSS_INSTRUMENT_OPTIONS)[instrument_choice]
+    class_value = dict(_SDSS_CLASS_OPTIONS)[class_choice]
+
+    with st.spinner("Querying SDSS metadata..."):
+        try:
+            products = sdss.search_spectra(
+                survey=survey_value,
+                instrument=instrument_value,
+                class_name=class_value,
+                wave_min_nm=wave_min,
+                wave_max_nm=wave_max,
+            )
+        except LookupError:
+            state.sdss_search_results.clear()
+            st.info("No spectra matched the selected filters.")
+            return
+        except Exception as exc:  # pragma: no cover - network path
+            st.error(str(exc))
+            return
+
+    state.sdss_search_results = list(products)
+    if not state.sdss_search_results:
+        st.info("No spectra matched the selected filters.")
+
+
+def _render_sdss_search_result(state: _StarHubState, product: Product, index: int) -> None:
+    with st.container():
+        st.markdown(f"**{product.title}**")
+        survey = product.extra.get("survey")
+        instrument = product.extra.get("instrument")
+        redshift = product.extra.get("z")
+        caption_bits = [bit for bit in [survey, instrument, product.target] if bit]
+        if redshift is not None:
+            caption_bits.append(f"z = {redshift:.4f}")
+        if caption_bits:
+            st.caption(" | ".join(caption_bits))
+
+        cols = st.columns([3, 1])
+        with cols[0]:
+            plate = product.extra.get("plate")
+            mjd = product.extra.get("mjd")
+            fiber = product.extra.get("fiberid")
+            if plate and mjd and fiber:
+                st.write(f"Plate {plate} • MJD {mjd} • Fiber {fiber}")
+            if product.urls.get("portal"):
+                st.markdown(
+                    f"[SkyServer summary]({product.urls['portal']})",
+                    help="Open SDSS SkyServer details",
+                )
+        with cols[1]:
+            if st.button("Fetch spectrum", key=f"sdss_candidate_{index}"):
+                try:
+                    specobjid = int(product.product_id)
+                except (TypeError, ValueError):
+                    st.error("SpecObjID unavailable for this result")
+                    return
+                with st.spinner("Retrieving SDSS spectrum..."):
+                    try:
+                        fetched = sdss.fetch_by_specobjid(specobjid)
+                    except Exception as exc:  # pragma: no cover - network path
+                        st.error(str(exc))
+                        return
+                _store_sdss_product(state, fetched)
+                st.success(f"Fetched spectrum {product.product_id}")
+
+
 def _render_sdss_section(session: AppSessionState, state: _StarHubState) -> None:
     st.markdown("### SDSS archive")
+    _render_sdss_filters(state)
     _sdss_specobj_controls(state)
     st.caption("Or fetch by plate / MJD / fiber identifiers")
     _sdss_plate_controls(state)
+
+    if state.sdss_search_results:
+        st.write(f"Found {len(state.sdss_search_results)} candidate spectrum(s).")
+        for index, product in enumerate(state.sdss_search_results):
+            _render_sdss_search_result(state, product, index)
 
     if state.sdss_products:
         st.write(f"Stored {len(state.sdss_products)} SDSS spectrum(s).")

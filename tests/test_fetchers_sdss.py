@@ -4,6 +4,7 @@ from typing import Any
 
 import numpy as np
 from astropy.io import fits
+from astropy import units as u
 from astropy.table import Table
 
 from server.fetchers import sdss
@@ -76,3 +77,33 @@ def test_sdss_fetch_by_plate(monkeypatch) -> None:
     assert product.product_id == "1234567890"
     assert _FakeSDSS.last_query_kwargs == {"plate": 2345, "mjd": 56789, "fiberID": 321}
     assert _FakeSDSS.last_spectrum_kwargs == {"plate": 2345, "mjd": 56789, "fiberID": 321}
+
+
+def test_sdss_search_spectra(monkeypatch) -> None:
+    monkeypatch.setattr(sdss, "SDSS", _FakeSDSS)
+
+    products = sdss.search_spectra(
+        survey="sdss",
+        instrument="SDSS",
+        class_name="STAR",
+        wave_min_nm=380.0,
+        wave_max_nm=920.0,
+    )
+
+    assert len(products) == 1
+    product = products[0]
+    assert product.product_id == "1234567890"
+    assert product.target == "STAR"
+    assert product.wave_range_nm is None
+    assert product.extra["plate"] == 2345
+    assert product.extra["survey"] == "sdss"
+    assert product.extra["instrument"] == "SDSS"
+
+    kwargs = _FakeSDSS.last_query_kwargs
+    assert kwargs["survey"] == "sdss"
+    assert kwargs["instrument"] == "SDSS"
+    assert kwargs["class_name"] == "STAR"
+    assert "wavelength" in kwargs
+    low, high = kwargs["wavelength"]
+    assert isinstance(low, u.Quantity)
+    assert isinstance(high, u.Quantity)

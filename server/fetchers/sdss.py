@@ -244,4 +244,84 @@ def fetch_by_plate(plate: int, mjd: int, fiber: int) -> Product:
     return _build_product(row, hdul=hdul)
 
 
-__all__ = ["fetch_by_specobjid", "fetch_by_plate"]
+def search_spectra(
+    *,
+    survey: str | None = None,
+    instrument: str | None = None,
+    class_name: str | None = None,
+    wave_min_nm: float | None = None,
+    wave_max_nm: float | None = None,
+) -> list[Product]:
+    """Query SDSS metadata for spectra matching the provided filters."""
+
+    kwargs: dict[str, Any] = {}
+    if survey:
+        kwargs["survey"] = survey
+    if instrument:
+        kwargs["instrument"] = instrument
+    if class_name:
+        kwargs["class_name"] = class_name
+
+    if wave_min_nm is not None or wave_max_nm is not None:
+        min_quantity = wave_min_nm * u.nm if wave_min_nm is not None else None
+        max_quantity = wave_max_nm * u.nm if wave_max_nm is not None else None
+        if min_quantity is not None or max_quantity is not None:
+            kwargs["wavelength"] = (min_quantity, max_quantity)
+
+    table = _query_specobj(**kwargs)
+
+    products: list[Product] = []
+    for row in table:
+        specobjid = _to_str(_raw(row, "specobjid"))
+        if specobjid is None:
+            continue
+        ra = _to_float(_raw(row, "ra"), unit=u.deg)
+        dec = _to_float(_raw(row, "dec"), unit=u.deg)
+        pipeline_version = _to_str(_raw(row, "run2d")) or _to_str(_raw(row, "run1d"))
+        target_class = _to_str(_raw(row, "class"))
+        urls = {
+            "portal": f"https://skyserver.sdss.org/dr17/en/tools/explore/summary.aspx?id={specobjid}",
+            "download": f"https://dr17.sdss.org/api/spectrum?specobjid={specobjid}",
+        }
+        extra: dict[str, Any] = {}
+        for key in ("plate", "mjd", "fiberid", "survey", "instrument", "programname", "z"):
+            value = _raw(row, key)
+            if value is None:
+                continue
+            if key in {"plate", "mjd", "fiberid"}:
+                numeric = _to_int(value)
+                if numeric is not None:
+                    extra[key] = numeric
+                continue
+            numeric_float = _to_float(value)
+            if numeric_float is not None and key == "z":
+                extra[key] = numeric_float
+                continue
+            coerced = _coerce_scalar(value)
+            if coerced is not None:
+                extra[key] = coerced
+
+        products.append(
+            Product(
+                provider="SDSS",
+                product_id=specobjid,
+                title=f"SDSS spectrum {specobjid}",
+                target=target_class,
+                ra=ra,
+                dec=dec,
+                wave_range_nm=None,
+                resolution_R=None,
+                wavelength_standard=None,
+                flux_units=None,
+                pipeline_version=pipeline_version,
+                urls=urls,
+                citation="SDSS Collaboration",
+                doi=None,
+                extra=extra,
+            )
+        )
+
+    return products
+
+
+__all__ = ["fetch_by_specobjid", "fetch_by_plate", "search_spectra"]
