@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -12,6 +13,12 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 from app.state.session import AppSessionState, DisplayMode, XAxisUnit
+from app.ui.similarity import render_similarity_panel
+from server.analysis.similarity import (
+    SimilarityCache,
+    SimilarityOptions,
+    TraceVectors,
+)
 from server.ingest.ascii_loader import ASCIIIngestError, load_ascii_spectrum
 from server.ingest.canonicalize import canonicalize_ascii, canonicalize_fits
 from server.ingest.fits_loader import FITSIngestError, load_fits_spectrum
@@ -292,6 +299,162 @@ def _plot_traces(
     return figure
 
 
+def _get_similarity_cache() -> SimilarityCache:
+    cache = st.session_state.get("similarity_cache")
+    if isinstance(cache, SimilarityCache):
+        return cache
+    cache = SimilarityCache()
+    st.session_state["similarity_cache"] = cache
+    return cache
+
+
+def _trace_vectors_from_session(
+    session: AppSessionState, trace_id: str, *, max_points: int = 15000
+) -> TraceVectors:
+    trace = session.traces[trace_id]
+    values, _ = _prepare_trace_values(trace)
+    wavelengths = np.asarray(trace.wavelength_vac_nm, dtype=float)
+    flux = np.asarray(values, dtype=float)
+    vector = TraceVectors(
+        trace_id=trace_id,
+        label=trace.label,
+        wavelengths_nm=wavelengths,
+        flux=flux,
+        fingerprint=trace.source_hash or trace.metadata.product_id,
+    )
+    return vector.limited(max_points)
+
+
+def _visible_trace_vectors(
+    session: AppSessionState, *, max_points: int = 15000
+) -> list[TraceVectors]:
+    vectors: list[TraceVectors] = []
+    for trace_id in session.trace_order:
+        view = session.trace_views[trace_id]
+        if not view.is_visible:
+            continue
+        vectors.append(_trace_vectors_from_session(session, trace_id, max_points=max_points))
+    return [vector for vector in vectors if vector.wavelengths_nm.size > 0]
+
+
+def _resolve_viewport_controls(
+    vectors: list[TraceVectors],
+) -> tuple[tuple[float | None, float | None], tuple[float, float] | None]:
+    if not vectors:
+        return (None, None), None
+    minima = [
+        float(np.nanmin(vector.wavelengths_nm))
+        for vector in vectors
+        if vector.wavelengths_nm.size > 0 and math.isfinite(float(np.nanmin(vector.wavelengths_nm)))
+    ]
+    maxima = [
+        float(np.nanmax(vector.wavelengths_nm))
+        for vector in vectors
+        if vector.wavelengths_nm.size > 0 and math.isfinite(float(np.nanmax(vector.wavelengths_nm)))
+    ]
+    if not minima or not maxima:
+        return (None, None), None
+    range_min = min(minima)
+    range_max = max(maxima)
+    if not math.isfinite(range_min) or not math.isfinite(range_max) or range_max <= range_min:
+        return (None, None), None
+    if math.isclose(range_min, range_max):
+        st.caption(
+            f"Similarity viewport fixed at {range_min:.2f} nm (insufficient range for manual control)."
+        )
+        return (None, None), (float(range_min), float(range_max))
+
+    auto = st.checkbox(
+        "Auto viewport",
+        value=st.session_state.get("similarity_auto_viewport", True),
+        key="similarity_auto_viewport",
+        help="Use the full overlapping wavelength range.",
+    )
+    slider = st.slider(
+        "Similarity viewport (nm)",
+        min_value=float(range_min),
+        max_value=float(range_max),
+        value=(float(range_min), float(range_max)),
+        key="similarity_viewport_range",
+        disabled=auto,
+    )
+    if auto:
+        return (None, None), (float(range_min), float(range_max))
+    return (float(slider[0]), float(slider[1])), (float(range_min), float(range_max))
+
+
+def _render_similarity_section(session: AppSessionState) -> None:
+    vectors = _visible_trace_vectors(session)
+    if len(vectors) < 2:
+        st.info("Add at least two visible traces to compute similarity metrics.")
+        return
+
+    viewport, display_range = _resolve_viewport_controls(vectors)
+    cache = _get_similarity_cache()
+
+    metric_choices = ["cosine", "rmse", "xcorr", "line_match"]
+    metrics = st.multiselect(
+        "Similarity metrics",
+        metric_choices,
+        default=["cosine", "rmse"],
+        key="similarity_metrics",
+    )
+    if not metrics:
+        metrics = ["cosine"]
+
+    normalization = st.selectbox(
+        "Normalization",
+        options=["unit", "max", "zscore", "none"],
+        index=0,
+        key="similarity_normalization",
+        help="Transform values before computing metrics.",
+    )
+    line_match_top_n = st.slider(
+        "Line-match peaks",
+        min_value=1,
+        max_value=15,
+        value=8,
+        key="similarity_line_peaks",
+        help="Number of top peaks considered for line matching.",
+    )
+
+    previous_primary = st.session_state.get("similarity_primary_metric")
+    if isinstance(previous_primary, str) and previous_primary in metrics:
+        metric_index = metrics.index(previous_primary)
+    else:
+        metric_index = 0
+    primary_metric = st.selectbox(
+        "Primary metric",
+        options=metrics,
+        index=metric_index,
+        key="similarity_primary_metric",
+    )
+
+    reference_labels = {vector.trace_id: vector.label for vector in vectors}
+    reference_choice = st.selectbox(
+        "Reference trace",
+        options=list(reference_labels.keys()),
+        format_func=lambda trace_id: reference_labels[trace_id],
+        key="similarity_reference",
+    )
+
+    options = SimilarityOptions(
+        metrics=tuple(metrics),
+        normalization=normalization,
+        line_match_top_n=line_match_top_n,
+        primary_metric=primary_metric,
+        reference_id=reference_choice,
+    )
+
+    render_similarity_panel(vectors, viewport, options, cache)
+    if display_range is not None:
+        st.caption(
+            f"Viewport: {display_range[0]:.1f}–{display_range[1]:.1f} nm"
+            if viewport == (None, None)
+            else f"Viewport: {viewport[0]:.1f}–{viewport[1]:.1f} nm"
+        )
+
+
 def render_overlay_tab(
     session: AppSessionState,
     *,
@@ -349,6 +512,9 @@ def render_overlay_tab(
     st.caption(
         "Wavelength baseline: vacuum nanometers. Unit toggles are idempotent and reversible."
     )
+
+    st.divider()
+    _render_similarity_section(session)
 
     overlay_payload = {
         "line_overlay": {

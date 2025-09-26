@@ -10,8 +10,8 @@ import pytest
 from astropy.io import fits
 
 from server.fetchers.ingest_product import ProductIngestError, _merge_metadata, ingest_product
-from server.models import CanonicalSpectrum
 from server.fetchers.models import Product
+from server.models import CanonicalSpectrum
 
 
 def _fake_product() -> Product:
