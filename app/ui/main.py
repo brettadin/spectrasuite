@@ -17,6 +17,8 @@ from app.ui.overlay import LineOverlaySettings, OverlayRenderResult, render_over
 from app.ui.star_hub import render_star_hub_tab
 from server.export.manifest import export_session
 from server.fetchers import resolver_simbad  # noqa: F401 - ensure module discovery
+from server.fetchers.nist import NistUnavailableError, fetch_lines
+from server.ingest.nist_lines import to_canonical as nist_to_canonical
 from server.overlays.lines import LineCatalog
 
 
@@ -60,7 +62,11 @@ def get_ui_contract() -> UIContract:
 
 
 def _configure_sidebar(
-    session: AppSessionState, catalog: LineCatalog, settings: dict[str, Any]
+    session: AppSessionState,
+    catalog: LineCatalog,
+    settings: dict[str, Any],
+    *,
+    app_version: str,
 ) -> LineOverlaySettings:
     st.sidebar.header("Examples")
     st.sidebar.write("Load bundled examples from data/examples in future runs.")
@@ -107,6 +113,87 @@ def _configure_sidebar(
         "Δv (km/s)", min_value=-300.0, max_value=300.0, value=0.0, step=5.0
     )
 
+    st.sidebar.header("NIST ASD")
+    nist_status = st.sidebar.empty()
+    nist_cache_notice = st.sidebar.empty()
+    nist_offline_notice = st.sidebar.empty()
+    default_window = settings.get("line_overlays", {}).get("default_window_nm", [400.0, 700.0])
+    if isinstance(default_window, (list, tuple)) and len(default_window) == 2:
+        try:
+            min_default = float(default_window[0])
+            max_default = float(default_window[1])
+        except Exception:
+            min_default, max_default = 400.0, 700.0
+    else:
+        min_default, max_default = 400.0, 700.0
+
+    with st.sidebar.form("nist_line_form"):
+        species_input = st.text_input(
+            "Species (e.g. Fe I)",
+            value=settings.get("line_overlays", {}).get("default_species", "Fe I"),
+            key="nist_species_input",
+        )
+        wavelength_min = st.number_input(
+            "Minimum wavelength (nm)",
+            min_value=0.0,
+            value=min_default,
+            key="nist_wave_min",
+        )
+        wavelength_max = st.number_input(
+            "Maximum wavelength (nm)",
+            min_value=0.0,
+            value=max_default,
+            key="nist_wave_max",
+        )
+        prefer_ritz = st.checkbox(
+            "Prefer Ritz wavelengths", value=True, key="nist_use_ritz"
+        )
+        submit = st.form_submit_button("Fetch NIST lines", key="nist_fetch_submit")
+
+    if submit:
+        nist_status.empty()
+        nist_cache_notice.empty()
+        nist_offline_notice.empty()
+        species_value = species_input.strip()
+        if not species_value:
+            nist_status.warning("Enter a species identifier (e.g. Fe I).")
+        elif wavelength_min >= wavelength_max:
+            nist_status.warning("Minimum wavelength must be less than maximum wavelength.")
+        else:
+            try:
+                rows, fetch_metadata = fetch_lines(
+                    species_value,
+                    float(wavelength_min),
+                    float(wavelength_max),
+                    use_ritz_wavelength=prefer_ritz,
+                )
+                canonical = nist_to_canonical(
+                    rows,
+                    fetch_metadata,
+                    app_version=app_version,
+                )
+                added, trace_id = session.register_trace(
+                    canonical, allow_duplicates=False, is_derived=True
+                )
+                if added:
+                    nist_status.success(
+                        f"Added NIST lines for {species_value} ({wavelength_min:.1f}–{wavelength_max:.1f} nm)"
+                    )
+                else:
+                    nist_status.warning(
+                        f"Duplicate NIST lines detected (trace {trace_id})."
+                    )
+                if fetch_metadata.get("cache_hit"):
+                    nist_cache_notice.info("Served from local cache.")
+                if fetch_metadata.get("offline_fallback"):
+                    nist_offline_notice.warning(
+                        "Using offline NIST sample because the service was unavailable."
+                    )
+            except NistUnavailableError as exc:
+                nist_status.error(str(exc))
+            except Exception as exc:  # pragma: no cover - defensive UI path
+                nist_status.error(f"Failed to fetch NIST lines: {exc}")
+
     return LineOverlaySettings(
         species=species, mode=mode, gamma=gamma, threshold=threshold, velocity_kms=velocity
     )
@@ -127,7 +214,9 @@ def run_app() -> None:
 
     _header(config.app_version)
 
-    line_settings = _configure_sidebar(session, catalog, config.settings)
+    line_settings = _configure_sidebar(
+        session, catalog, config.settings, app_version=config.app_version
+    )
 
     overlay_tab, differential_tab, star_hub_tab, docs_tab = st.tabs(get_ui_contract().tabs)
 
