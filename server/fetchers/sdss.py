@@ -19,6 +19,7 @@ except Exception:  # pragma: no cover - astroquery optional during tests
     SDSS = None  # type: ignore[assignment]
 
 from server.fetchers.models import Product
+from server.providers import ProviderHit, ProviderQuery, register_provider
 
 _FLUX_UNITS = "1e-17 erg s^-1 cm^-2 Å^-1"
 
@@ -181,40 +182,6 @@ def _normalise_class_filter(
             continue
         normalised.append(text.replace("'", "''"))
     return normalised
-
-
-def search_spectra(
-    *,
-    ra: float,
-    dec: float,
-    radius_arcsec: float = 30.0,
-    limit: int = 10,
-    class_: str | Iterable[str] | None = None,
-    class_filter: str | Iterable[str] | None = None,
-) -> Iterable[Product]:
-    """Search for SDSS spectra near coordinates."""
-
-    if SDSS is None:
-        raise RuntimeError("astroquery.sdss is not available")
-
-    radius_arcmin = _normalise_radius(radius_arcsec)
-    if radius_arcmin is None:
-        return []
-
-    max_results = _normalise_limit(limit)
-    if max_results is None:
-        return []
-
-    ra_value, dec_value = _coerce_coordinates(ra, dec)
-    filter_values = _select_filters(class_, class_filter)
-    class_clause = _build_class_clause(filter_values)
-    sql = _build_search_sql(max_results, ra_value, dec_value, radius_arcmin, class_clause)
-
-    table = SDSS.query_sql(sql)
-    if table is None or len(table) == 0:
-        return []
-
-    return _iter_products(table)
 
 
 def _normalise_radius(radius_arcsec: float) -> float | None:
@@ -385,6 +352,23 @@ def _build_product(row: Any, *, hdul: fits.HDUList) -> Product:
     )
 
 
+def _product_to_hit(product: Product) -> ProviderHit:
+    telescope = str(product.extra.get("survey")) if product.extra.get("survey") else None
+    instrument = str(product.extra.get("instrument")) if product.extra.get("instrument") else None
+    extras = {"class": product.extra.get("class"), "plate": product.extra.get("plate")}
+    extras = {k: v for k, v in extras.items() if v is not None}
+    return ProviderHit(
+        provider="SDSS",
+        product=product,
+        telescope=telescope,
+        instrument=instrument,
+        wave_range_nm=product.wave_range_nm,
+        preview_url=None,
+        download_url=product.urls.get("download"),
+        extras=extras,
+    )
+
+
 def fetch_by_specobjid(specobjid: int) -> Product:
     """Fetch an SDSS spectrum by SpecObjID."""
 
@@ -403,4 +387,61 @@ def fetch_by_plate(plate: int, mjd: int, fiber: int) -> Product:
     return _build_product(row, hdul=hdul)
 
 
-__all__ = ["search_spectra", "fetch_by_specobjid", "fetch_by_plate"]
+def search_spectra(
+    *,
+    ra: float,
+    dec: float,
+    radius_arcsec: float = 30.0,
+    limit: int = 10,
+    class_: str | Iterable[str] | None = None,
+    class_filter: str | Iterable[str] | None = None,
+) -> Iterable[ProviderHit]:
+    """Search for SDSS spectra near coordinates."""
+
+    if SDSS is None:
+        raise RuntimeError("astroquery.sdss is not available")
+
+    radius_arcmin = _normalise_radius(radius_arcsec)
+    if radius_arcmin is None:
+        return []
+
+    max_results = _normalise_limit(limit)
+    if max_results is None:
+        return []
+
+    ra_value, dec_value = _coerce_coordinates(ra, dec)
+    filter_values = _select_filters(class_, class_filter)
+    class_clause = _build_class_clause(filter_values)
+    sql = _build_search_sql(max_results, ra_value, dec_value, radius_arcmin, class_clause)
+
+    table = SDSS.query_sql(sql)
+    if table is None or len(table) == 0:
+        return []
+
+    products = list(_iter_products(table))
+    return [_product_to_hit(product) for product in products]
+
+
+def search(query: ProviderQuery) -> Iterable[ProviderHit]:
+    """Adapter entry point used by the provider registry."""
+
+    coordinates = query.coordinates()
+    if coordinates is None:
+        return []
+    ra, dec = coordinates
+    radius = query.filters.get("sdss_radius_arcsec") if query.filters else None
+    limit = query.filters.get("sdss_limit") if query.filters else None
+    class_filter = query.filters.get("sdss_class") if query.filters else None
+    return search_spectra(
+        ra=ra,
+        dec=dec,
+        radius_arcsec=float(radius) if radius is not None else (query.radius_arcsec or 30.0),
+        limit=int(limit) if limit is not None else (query.limit or 10),
+        class_=class_filter,
+    )
+
+
+register_provider("SDSS", search)
+
+
+__all__ = ["fetch_by_plate", "fetch_by_specobjid", "search", "search_spectra"]

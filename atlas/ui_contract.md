@@ -8,5 +8,7 @@
   provenance caption, and similarity analysis controls (viewport, metrics, ribbon, matrices).
 - Differential tab: select boxes for trace A/B, buttons for subtraction and ratio with identical
   suppression messaging.
-- Star Hub: SIMBAD resolver card placeholder; future runs expand provider grid.
+- Star Hub: SIMBAD resolver with fixture toggle, provider fan-out controls (radius, limit, DOI),
+  persistent provider/telescope/instrument/λ filters, preview panels, and multi-select "Add to
+  overlay" button.
 - Docs tab: renders markdown from `docs/static`.

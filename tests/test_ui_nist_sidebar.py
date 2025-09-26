@@ -4,6 +4,8 @@ from streamlit.testing.v1 import AppTest
 
 from app.state.session import AppSessionState
 from app.ui import main as main_ui
+
+
 class _FakeCatalog:
     def species(self) -> list[str]:
         return ["Fe I", "Mg II"]
@@ -52,9 +54,7 @@ def test_sidebar_form_registers_nist_trace(monkeypatch) -> None:
 
     settings = {"line_overlays": {"default_species": "Fe I", "default_window_nm": [500.0, 501.0]}}
 
-    at = AppTest.from_function(
-        _render_sidebar_app, args=(session, catalog, settings)
-    ).run()
+    at = AppTest.from_function(_render_sidebar_app, args=(session, catalog, settings)).run()
     at.sidebar.button(key="nist_fetch_submit").click().run()
 
     assert session.trace_order
