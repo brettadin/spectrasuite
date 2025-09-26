@@ -240,7 +240,6 @@ def _primary_axis_title(display_mode: DisplayMode) -> str:
 
 
 def _render_trace_controls(session: AppSessionState) -> None:
-    st.subheader("Trace Manager")
     for trace_id in session.trace_order:
         trace = session.traces[trace_id]
         view = session.trace_views[trace_id]
@@ -257,6 +256,18 @@ def _render_trace_controls(session: AppSessionState) -> None:
         transform_notes = _collect_transform_notes(trace)
         if transform_notes:
             st.caption("Transforms: " + "; ".join(transform_notes))
+
+
+def _sync_trace_visibility(session: AppSessionState) -> None:
+    """Ensure Streamlit widget state mirrors the session trace visibility."""
+
+    for trace_id in session.trace_order:
+        view = session.trace_views[trace_id]
+        key = f"visible_{trace_id}"
+        if key not in st.session_state:
+            st.session_state[key] = view.is_visible
+        desired_visibility = bool(st.session_state.get(key, view.is_visible))
+        session.toggle_visibility(trace_id, desired_visibility)
 
 
 def _plot_traces(
@@ -491,30 +502,39 @@ def render_overlay_tab(
             except (ASCIIIngestError, FITSIngestError) as err:
                 st.error(str(err))
 
-    _render_trace_controls(session)
-    figure = _plot_traces(session, axis_unit, session.display_mode)
+    _sync_trace_visibility(session)
 
-    line_x, line_y = _plot_lines(catalog, axis_unit, line_settings)
-    if line_x and figure is not None:
-        figure.add_trace(
-            go.Scatter(
-                x=line_x,
-                y=line_y,
-                mode="lines",
-                name=f"{line_settings.species} lines",
-                line=dict(color="#888888", width=1.5),
-            ),
-            secondary_y=True,
+    plot_container = st.container()
+    controls_container = st.container()
+
+    with plot_container:
+        figure = _plot_traces(session, axis_unit, session.display_mode)
+
+        line_x, line_y = _plot_lines(catalog, axis_unit, line_settings)
+        if line_x and figure is not None:
+            figure.add_trace(
+                go.Scatter(
+                    x=line_x,
+                    y=line_y,
+                    mode="lines",
+                    name=f"{line_settings.species} lines",
+                    line=dict(color="#888888", width=1.5),
+                ),
+                secondary_y=True,
+            )
+
+        st.plotly_chart(figure, use_container_width=True, config={"scrollZoom": True})
+
+        st.caption(
+            "Wavelength baseline: vacuum nanometers. Unit toggles are idempotent and reversible."
         )
 
-    st.plotly_chart(figure, use_container_width=True, config={"scrollZoom": True})
+        st.divider()
+        _render_similarity_section(session)
 
-    st.caption(
-        "Wavelength baseline: vacuum nanometers. Unit toggles are idempotent and reversible."
-    )
-
-    st.divider()
-    _render_similarity_section(session)
+    with controls_container:
+        with st.expander("Trace Manager", expanded=False):
+            _render_trace_controls(session)
 
     overlay_payload = {
         "line_overlay": {
