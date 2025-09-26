@@ -60,10 +60,13 @@ class _FakeObservations:
 def test_mast_search_products(monkeypatch) -> None:
     monkeypatch.setattr(mast, "Observations", _FakeObservations)
 
-    products = list(mast.search_products(ra=10.0, dec=20.0, radius_arcsec=5.0))
+    hits = list(mast.search_products(ra=10.0, dec=20.0, radius_arcsec=5.0))
 
-    assert len(products) == 1
-    product = products[0]
+    assert len(hits) == 1
+    hit = hits[0]
+    product = hit.product
+    assert hit.provider == "MAST"
+    assert hit.preview_url == "https://mast.stsci.edu/spectrum.jpg"
     assert product.provider == "MAST"
     assert product.product_id == "123"
     assert product.title == "Test spectrum"

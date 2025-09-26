@@ -26,7 +26,9 @@ def _prepare_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
             numeric_intensity = float(intensity)
         except Exception:
             continue
-        prepared.append({**row, "wavelength_nm": numeric_wavelength, "relative_intensity": numeric_intensity})
+        prepared.append(
+            {**row, "wavelength_nm": numeric_wavelength, "relative_intensity": numeric_intensity}
+        )
     prepared.sort(key=lambda item: item["wavelength_nm"])
     return prepared
 
@@ -48,13 +50,17 @@ def _label(species: str, window: tuple[float, float] | None) -> str:
     return f"NIST lines: {species} {low:.1f}–{high:.1f} nm"
 
 
-def _compute_hash(rows: list[dict[str, Any]], species: str, window: tuple[float, float] | None) -> str:
+def _compute_hash(
+    rows: list[dict[str, Any]], species: str, window: tuple[float, float] | None
+) -> str:
     payload = {
         "species": species,
         "window": window,
         "rows": rows,
     }
-    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
     return digest
 
 

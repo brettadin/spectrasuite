@@ -78,8 +78,8 @@ def _load_fixture(identifier: str) -> ResolverResult | None:
     )
 
 
-def resolve(identifier: str) -> ResolverResult:
-    """Resolve an identifier using SIMBAD or bundled fixtures."""
+def resolve(identifier: str, *, use_fixture: bool = False) -> ResolverResult:
+    """Resolve an identifier using SIMBAD with an optional fixture fallback."""
 
     identifier = identifier.strip()
     if not identifier:
@@ -89,11 +89,13 @@ def resolve(identifier: str) -> ResolverResult:
     if online is not None:
         return online
 
-    fixture = _load_fixture(identifier)
-    if fixture is not None:
-        return fixture
+    if use_fixture:
+        fixture = _load_fixture(identifier)
+        if fixture is not None:
+            return fixture
 
-    raise LookupError(f"Unable to resolve '{identifier}' via SIMBAD or fixtures")
+    suffix = " or fixture" if use_fixture else ""
+    raise LookupError(f"Unable to resolve '{identifier}' via SIMBAD{suffix}")
 
 
 __all__ = ["resolve"]

@@ -105,7 +105,7 @@ def test_sdss_search_spectra_class_filter(monkeypatch) -> None:
     monkeypatch.setattr(sdss, "SDSS", _FakeSDSS)
     _FakeSDSS.reset()
 
-    products = list(
+    hits = list(
         sdss.search_spectra(
             ra=150.0,
             dec=2.3,
@@ -115,7 +115,10 @@ def test_sdss_search_spectra_class_filter(monkeypatch) -> None:
         )
     )
 
-    assert products
+    assert hits
+    hit = hits[0]
+    assert hit.provider == "SDSS"
+    assert hit.download_url.endswith("specobjid=1234567890")
     assert _FakeSDSS.last_query_sql is not None
     assert "TOP 5" in _FakeSDSS.last_query_sql
     assert "class IN ('STAR')" in _FakeSDSS.last_query_sql

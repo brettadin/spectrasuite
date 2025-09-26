@@ -16,6 +16,7 @@ except Exception:  # pragma: no cover - astroquery optional during tests
     Observations = None  # type: ignore[assignment]
 
 from server.fetchers.models import Product
+from server.providers import ProviderHit, ProviderQuery, register_provider
 
 _SPECTRUM_TYPES = {"spectrum"}
 _DOWNLOAD_ROOT = "https://mast.stsci.edu/api/v0.1/Download/file?uri={uri}"
@@ -227,7 +228,31 @@ def _rows_to_products(rows: Table) -> Iterator[Product]:
         )
 
 
-def search_products(*, ra: float, dec: float, radius_arcsec: float = 5.0) -> Iterable[Product]:
+def _product_to_hit(product: Product) -> ProviderHit:
+    telescope = (
+        str(product.extra.get("obs_collection")) if product.extra.get("obs_collection") else None
+    )
+    instrument = (
+        str(product.extra.get("instrument_name")) if product.extra.get("instrument_name") else None
+    )
+    extras: dict[str, Any] = {}
+    if product.extra.get("filters"):
+        extras["filters"] = product.extra.get("filters")
+    if product.extra.get("proposal_id"):
+        extras["proposal_id"] = product.extra.get("proposal_id")
+    return ProviderHit(
+        provider="MAST",
+        product=product,
+        telescope=telescope,
+        instrument=instrument,
+        wave_range_nm=product.wave_range_nm,
+        preview_url=product.urls.get("preview"),
+        download_url=product.urls.get("download") or product.urls.get("product"),
+        extras=extras,
+    )
+
+
+def search_products(*, ra: float, dec: float, radius_arcsec: float = 5.0) -> Iterable[ProviderHit]:
     """Search the MAST archive for spectroscopic products."""
 
     if Observations is None:
@@ -241,7 +266,28 @@ def search_products(*, ra: float, dec: float, radius_arcsec: float = 5.0) -> Ite
         raise RuntimeError("MAST query failed") from exc
     if table is None or len(table) == 0:
         return []
-    return tuple(_rows_to_products(table))
+    products = tuple(_rows_to_products(table))
+    return tuple(_product_to_hit(product) for product in products)
 
 
-__all__ = ["search_products"]
+def search(query: ProviderQuery) -> Iterable[ProviderHit]:
+    """Adapter entry point used by the provider registry."""
+
+    coordinates = query.coordinates()
+    if coordinates is None:
+        return []
+    ra, dec = coordinates
+    radius = query.filters.get("mast_radius_arcsec") if query.filters else None
+    if radius is None:
+        radius = query.radius_arcsec or 5.0
+    try:
+        radius_value = float(radius)
+    except (TypeError, ValueError):
+        radius_value = 5.0
+    return search_products(ra=ra, dec=dec, radius_arcsec=radius_value)
+
+
+register_provider("MAST", search)
+
+
+__all__ = ["search", "search_products"]
