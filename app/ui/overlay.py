@@ -239,8 +239,11 @@ def _primary_axis_title(display_mode: DisplayMode) -> str:
     return mapping.get(display_mode, "Flux")
 
 
-def _render_trace_controls(session: AppSessionState) -> None:
-    st.subheader("Trace Manager")
+def _render_trace_controls(
+    session: AppSessionState, *, show_header: bool = True
+) -> None:
+    if show_header:
+        st.subheader("Trace Manager")
     for trace_id in session.trace_order:
         trace = session.traces[trace_id]
         view = session.trace_views[trace_id]
@@ -297,6 +300,16 @@ def _plot_traces(
     else:
         figure.update_yaxes(showgrid=False, secondary_y=True)
     return figure
+
+
+def _sync_trace_visibility(session: AppSessionState) -> None:
+    """Align session trace visibility with Streamlit widget state."""
+
+    for trace_id in session.trace_order:
+        view = session.trace_views[trace_id]
+        key = f"visible_{trace_id}"
+        desired = st.session_state.get(key, view.is_visible)
+        session.toggle_visibility(trace_id, bool(desired))
 
 
 def _get_similarity_cache() -> SimilarityCache:
@@ -491,7 +504,7 @@ def render_overlay_tab(
             except (ASCIIIngestError, FITSIngestError) as err:
                 st.error(str(err))
 
-    _render_trace_controls(session)
+    _sync_trace_visibility(session)
     figure = _plot_traces(session, axis_unit, session.display_mode)
 
     line_x, line_y = _plot_lines(catalog, axis_unit, line_settings)
@@ -507,11 +520,14 @@ def render_overlay_tab(
             secondary_y=True,
         )
 
-    st.plotly_chart(figure, use_container_width=True, config={"scrollZoom": True})
+    st.plotly_chart(figure, width="stretch", config={"scrollZoom": True})
 
     st.caption(
         "Wavelength baseline: vacuum nanometers. Unit toggles are idempotent and reversible."
     )
+
+    with st.expander("Trace Manager", expanded=False):
+        _render_trace_controls(session, show_header=False)
 
     st.divider()
     _render_similarity_section(session)
