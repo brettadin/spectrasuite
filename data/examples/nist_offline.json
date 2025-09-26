@@ -1,0 +1,43 @@
+{
+  "entries": [
+    {
+      "species": "Fe I",
+      "wavelength_nm": 516.751,
+      "relative_intensity": 200.0,
+      "ritz_wavelength_nm": 516.751,
+      "observed_wavelength_nm": 516.742,
+      "transition": "a5D4 - z5F5",
+      "lower_level": "a5D4",
+      "upper_level": "z5F5",
+      "configuration": "3d6(5D)4s - 3d6(5D)4p",
+      "Aki": 1.2e7,
+      "notes": "Offline sample"
+    },
+    {
+      "species": "Fe I",
+      "wavelength_nm": 517.02,
+      "relative_intensity": 150.0,
+      "ritz_wavelength_nm": 517.02,
+      "observed_wavelength_nm": 517.01,
+      "transition": "a5D3 - z5F4",
+      "lower_level": "a5D3",
+      "upper_level": "z5F4",
+      "configuration": "3d6(5D)4s - 3d6(5D)4p",
+      "Aki": 9.1e6,
+      "notes": "Offline sample"
+    },
+    {
+      "species": "Mg II",
+      "wavelength_nm": 279.553,
+      "relative_intensity": 300.0,
+      "ritz_wavelength_nm": 279.553,
+      "observed_wavelength_nm": 279.552,
+      "transition": "3p 2P3/2 - 3d 2D5/2",
+      "lower_level": "3p 2P3/2",
+      "upper_level": "3d 2D5/2",
+      "configuration": "[Ne]3s",
+      "Aki": 2.6e8,
+      "notes": "Offline sample"
+    }
+  ]
+}
