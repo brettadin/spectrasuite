@@ -5,7 +5,7 @@
 - Header: title, version badge (`app_version`), global search field, export button below tabs.
 - Overlay tab: file uploader, trace manager checkboxes with axis-family captions and transform provenance
   (unit conversions, air↔vacuum, differential events), Plotly chart with secondary axis for line overlays,
-  provenance caption.
+  provenance caption, and similarity analysis controls (viewport, metrics, ribbon, matrices).
 - Differential tab: select boxes for trace A/B, buttons for subtraction and ratio with identical
   suppression messaging.
 - Star Hub: SIMBAD resolver card placeholder; future runs expand provider grid.
